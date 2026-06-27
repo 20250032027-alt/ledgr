@@ -6,12 +6,11 @@ import { BarChart3, X } from 'lucide-react'
 function coaTypeToSection(account) {
   const type = account.type
   if (type === 'asset') {
-    const code = parseInt(account.code || '0', 10)
-    if (code >= 1500 && code < 2000) return 'fixed-asset'
-    if (code >= 1000 && code < 1500) return 'current-asset'
     const n = account.name.toLowerCase()
     if (n.includes('equipment') || n.includes('furniture') || n.includes('vehicle')
       || n.includes('building') || n.includes('land') || n.includes('property')) return 'fixed-asset'
+    const code = parseInt(account.code || '0', 10)
+    if (code >= 1500 && code < 2000) return 'fixed-asset'
     return 'current-asset'
   }
   if (type === 'liability') return 'current-liability'
@@ -176,12 +175,24 @@ export default function FinancialCondition() {
   const isSections = useMemo(() => buildSections(isLedger, accounts, isVouchers), [isLedger, accounts, isVouchers])
 
   // Balance Sheet figures
-  const { currentAssets, fixedAssets, currentLiabilities, equity } = bsSections
+  const { currentAssets, fixedAssets, currentLiabilities, equity, revenue: bsRevenueRows, expenses: bsExpenseRows } = bsSections
 
+  // Accrual basis: revenue is recognized when an invoice is issued, not when
+  // it's paid — payment just moves the asset from Accounts Receivable to
+  // Cash. So both paid and unpaid invoices count as revenue; only the asset
+  // side (Cash vs A/R) depends on payment status. Without this, any unpaid
+  // invoice inflates Assets with nothing on the other side of the equation.
   const paidBillsBS = bsBills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
   const unpaidBillsBS = bsBills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
   if (paidBillsBS > 0) currentAssets.push({ name: 'Cash from Collections', amount: paidBillsBS })
   if (unpaidBillsBS > 0) currentAssets.push({ name: 'Accounts Receivable (Invoices)', amount: unpaidBillsBS })
+
+  const allBillsBS = paidBillsBS + unpaidBillsBS
+  if (allBillsBS > 0) {
+    const existingBS = bsRevenueRows.find(r => r.name === 'Service Revenue')
+    if (existingBS) existingBS.amount += allBillsBS
+    else bsRevenueRows.push({ name: 'Billing Revenue (Invoiced)', amount: allBillsBS })
+  }
 
   const totalCurrentAssets = currentAssets.reduce((s, r) => s + r.amount, 0)
   const totalFixedAssets = fixedAssets.reduce((s, r) => s + r.amount, 0)
@@ -189,23 +200,34 @@ export default function FinancialCondition() {
   const totalLiabilities = currentLiabilities.reduce((s, r) => s + r.amount, 0)
   const totalEquity = equity.reduce((s, r) => s + r.amount, 0)
 
-  // Income Statement figures
+  // Cumulative net income up to the Balance Sheet's own "as of" date. This
+  // intentionally does NOT reuse the Income Statement's net income below —
+  // that panel has its own independent date range, and reusing it here would
+  // make the "out of balance" check fire falsely whenever the two date
+  // filters don't happen to cover the same period.
+  const bsTotalRevenue = bsRevenueRows.reduce((s, r) => s + r.amount, 0)
+  const bsTotalExpenses = bsExpenseRows.reduce((s, r) => s + r.amount, 0)
+  const cumulativeNetIncome = bsTotalRevenue - bsTotalExpenses
+  const totalLE = totalLiabilities + totalEquity + cumulativeNetIncome
+
+  // Income Statement figures — its own date range, for display only
   const { revenue, expenses } = isSections
 
   const paidBillsIS = isBills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
-  if (paidBillsIS > 0) {
+  const unpaidBillsIS = isBills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  const allBillsIS = paidBillsIS + unpaidBillsIS
+  if (allBillsIS > 0) {
     const existing = revenue.find(r => r.name === 'Service Revenue')
-    if (existing) existing.amount += paidBillsIS
-    else revenue.push({ name: 'Billing Revenue', amount: paidBillsIS })
+    if (existing) existing.amount += allBillsIS
+    else revenue.push({ name: 'Billing Revenue (Invoiced)', amount: allBillsIS })
   }
 
   const totalRevenue = revenue.reduce((s, r) => s + r.amount, 0)
   const totalExpenses = expenses.reduce((s, r) => s + r.amount, 0)
   const netIncome = totalRevenue - totalExpenses
-  const totalLE = totalLiabilities + totalEquity + netIncome
 
   const hasData = vouchers.length > 0 || bills.length > 0
-  const hasOrphans = [...currentAssets, ...fixedAssets, ...currentLiabilities, ...equity, ...revenue, ...expenses]
+  const hasOrphans = [...currentAssets, ...fixedAssets, ...currentLiabilities, ...equity, ...revenue, ...expenses, ...bsRevenueRows, ...bsExpenseRows]
     .some(r => r.name.includes('⚠'))
 
   const hasDateFilters = asOf || incomeFrom || incomeTo
@@ -314,20 +336,20 @@ export default function FinancialCondition() {
                 fontSize: 14, fontWeight: 800, borderTop: '2px solid var(--border2)', marginBottom: 20,
               }}>
                 <span>Total Assets</span>
-                <span style={{ fontFamily: 'var(--mono)', color: 'var(--green)' }}>{fmt(totalAssets, cur)}</span>
+                <span style={{ fontFamily: 'var(--mono)', color: totalAssets >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt(totalAssets, cur)}</span>
               </div>
 
               <Section title="Current Liabilities" rows={currentLiabilities} total={totalLiabilities} color="var(--red)" />
               <Section title="Equity" rows={equity} total={totalEquity} color="var(--accent)" />
 
-              {netIncome !== 0 && (
+              {cumulativeNetIncome !== 0 && (
                 <div style={{
                   display: 'flex', justifyContent: 'space-between',
                   padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 13,
                 }}>
-                  <span style={{ color: 'var(--text-2)' }}>Net Income (current period)</span>
-                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: netIncome >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                    {fmt(netIncome)}
+                  <span style={{ color: 'var(--text-2)' }}>Net Income (cumulative)</span>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 12, color: cumulativeNetIncome >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    {fmt(cumulativeNetIncome)}
                   </span>
                 </div>
               )}

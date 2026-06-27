@@ -53,39 +53,59 @@ export function StoreProvider({ children, userId }) {
     async function loadAll() {
       setLoading(true)
       setError(null)
-      try {
-        const [accRes, cliRes, vouRes, billRes, setRes, tplRes] = await Promise.all([
-          supabase.from('accounts').select('*'),
-          supabase.from('clients').select('*').order('created_at'),
-          supabase.from('vouchers').select('*').order('created_at'),
-          supabase.from('bills').select('*').order('created_at'),
-          supabase.from('settings').select('*').eq('user_id', userId).maybeSingle(),
-          supabase.from('voucher_templates').select('*').order('created_at'),
-        ])
-        if (cancelled) return
-        for (const res of [accRes, cliRes, vouRes, billRes, setRes, tplRes]) {
-          if (res.error) throw res.error
-        }
 
-        setAccounts(sortByCode((accRes.data || []).map(fromDb)))
-        setClients((cliRes.data || []).map(fromDb))
-        setVouchers((vouRes.data || []).map(fromDb))
-        setBills((billRes.data || []).map(fromDb))
-        setTemplates((tplRes.data || []).map(fromDb))
+      const results = await Promise.allSettled([
+        supabase.from('accounts').select('*'),
+        supabase.from('clients').select('*').order('created_at'),
+        supabase.from('vouchers').select('*').order('created_at'),
+        supabase.from('bills').select('*').order('created_at'),
+        supabase.from('settings').select('*').eq('user_id', userId).maybeSingle(),
+        supabase.from('voucher_templates').select('*').order('created_at'),
+      ])
+      if (cancelled) return
 
-        if (setRes.data) {
-          setSettings(fromDb(setRes.data))
-        } else {
-          // First login for this user: create their settings row.
+      const [accRes, cliRes, vouRes, billRes, setRes, tplRes] = results
+      const loadErrors = []
+
+      // Each table is handled independently — one missing/broken table
+      // (e.g. a migration that hasn't been run yet) shouldn't stop the rest
+      // of the app's data from loading.
+      function unwrap(res, label) {
+        if (res.status === 'rejected') { loadErrors.push(`${label}: ${res.reason?.message || 'failed to load'}`); return undefined }
+        if (res.value.error) { loadErrors.push(`${label}: ${res.value.error.message}`); return undefined }
+        return res.value.data
+      }
+
+      const accData = unwrap(accRes, 'Accounts')
+      const cliData = unwrap(cliRes, 'Clients')
+      const vouData = unwrap(vouRes, 'Vouchers')
+      const billData = unwrap(billRes, 'Bills')
+      const setData = unwrap(setRes, 'Settings')
+      const tplData = unwrap(tplRes, 'Voucher templates')
+
+      if (accData) setAccounts(sortByCode(accData.map(fromDb)))
+      if (cliData) setClients(cliData.map(fromDb))
+      if (vouData) setVouchers(vouData.map(fromDb))
+      if (billData) setBills(billData.map(fromDb))
+      if (tplData) setTemplates(tplData.map(fromDb))
+
+      if (setData) {
+        setSettings(fromDb(setData))
+      } else if (!loadErrors.some(e => e.startsWith('Settings'))) {
+        // No settings row yet — first login for this user, create one.
+        try {
           const { data, error: insErr } = await supabase
             .from('settings').insert(toDb(defaultSettings)).select().single()
           if (insErr) throw insErr
           if (!cancelled && data) setSettings(fromDb(data))
+        } catch (e) {
+          loadErrors.push(`Settings: ${e.message || 'failed to create default settings'}`)
         }
-      } catch (e) {
-        if (!cancelled) setError(e.message || 'Failed to load your data from Supabase.')
-      } finally {
-        if (!cancelled) setLoading(false)
+      }
+
+      if (!cancelled) {
+        if (loadErrors.length) setError(`Some data failed to load — ${loadErrors.join('; ')}`)
+        setLoading(false)
       }
     }
     loadAll()
