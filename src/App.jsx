@@ -8,6 +8,7 @@ import Clients from './pages/Clients'
 import Vouchers from './pages/Vouchers'
 import ChartOfAccounts from './pages/ChartOfAccounts'
 import TrialBalance from './pages/TrialBalance'
+import AccountListing from './pages/AccountListing'
 import CashFlow from './pages/CashFlow'
 import FinancialCondition from './pages/FinancialCondition'
 import Billing from './pages/Billing'
@@ -24,6 +25,7 @@ const NAV = [
   { id: 'vouchers', label: 'Vouchers', icon: FileText },
   { id: 'accounts', label: 'Chart of Accounts', icon: BookText },
   { id: 'trial-balance', label: 'Trial Balance', icon: Scale },
+  { id: 'account-listing', label: 'Account Listing', icon: BookOpen },
   { id: 'cash-flow', label: 'Cash Flow', icon: Waves },
   { id: 'financial', label: 'Financial Reports', icon: BarChart3 },
   { id: 'billing', label: 'Billing', icon: Receipt },
@@ -32,13 +34,13 @@ const NAV = [
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard', clients: 'Clients', vouchers: 'Vouchers',
-  accounts: 'Chart of Accounts', 'trial-balance': 'Trial Balance', 'cash-flow': 'Cash Flow',
+  accounts: 'Chart of Accounts', 'trial-balance': 'Trial Balance', 'account-listing': 'Account Listing', 'cash-flow': 'Cash Flow',
   financial: 'Financial Reports', billing: 'Billing', settings: 'Settings',
 }
 
 const PAGES = {
   dashboard: Dashboard, clients: Clients, vouchers: Vouchers,
-  accounts: ChartOfAccounts, 'trial-balance': TrialBalance, 'cash-flow': CashFlow,
+  accounts: ChartOfAccounts, 'trial-balance': TrialBalance, 'account-listing': AccountListing, 'cash-flow': CashFlow,
   financial: FinancialCondition, billing: Billing, settings: Settings,
 }
 
@@ -80,19 +82,19 @@ function AppShell({ userEmail }) {
             </div>
           ))}
           <div className="nav-section-label">Accounting</div>
-          {NAV.slice(2, 7).map(({ id, label, icon: Icon }) => (
+          {NAV.slice(2, 8).map(({ id, label, icon: Icon }) => (
             <div key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => navigate(id)}>
               <Icon size={16} />{label}
             </div>
           ))}
           <div className="nav-section-label">Finance</div>
-          {NAV.slice(7, 8).map(({ id, label, icon: Icon }) => (
+          {NAV.slice(8, 9).map(({ id, label, icon: Icon }) => (
             <div key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => navigate(id)}>
               <Icon size={16} />{label}
             </div>
           ))}
           <div className="nav-section-label">System</div>
-          {NAV.slice(8).map(({ id, label, icon: Icon }) => (
+          {NAV.slice(9).map(({ id, label, icon: Icon }) => (
             <div key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => navigate(id)}>
               <Icon size={16} />{label}
             </div>
