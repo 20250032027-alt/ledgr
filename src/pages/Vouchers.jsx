@@ -421,7 +421,7 @@ export default function Vouchers() {
           <div className="page-h1">Vouchers</div>
           <div className="page-sub">{vouchers.length} journal entr{vouchers.length !== 1 ? 'ies' : 'y'}</div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             className="btn btn-ghost"
             disabled={filtered.length === 0 || exporting}

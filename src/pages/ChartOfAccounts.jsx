@@ -149,7 +149,7 @@ export default function ChartOfAccounts() {
             <BookOpen size={36} color="var(--border2)" />
             <div style={{ fontWeight: 600 }}>No accounts yet</div>
             <div style={{ fontSize: 13 }}>Start from a standard starter chart, or add accounts one by one</div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
               <button className="btn btn-primary" onClick={seedDefaultAccounts}>
                 <Sparkles size={14} /> Use Starter Chart of Accounts
               </button>

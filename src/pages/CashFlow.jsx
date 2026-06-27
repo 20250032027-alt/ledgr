@@ -49,16 +49,21 @@ export default function CashFlow() {
     .map(v => ({ ...v, delta: cashDelta(v.entries), bucket: classify(v.entries) }))
     .filter(v => Math.abs(v.delta) > 0.005)
 
-  const paidBillsTotal = bills.filter(b => b.status === 'paid')
-    .reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  // Newer bills auto-post a real voucher (tagged with reference = bill
+  // number) when created and when marked paid, so they already flow through
+  // cashVouchers above via the normal ledger. Only bills predating that
+  // feature — with no matching voucher — need this legacy fallback, or
+  // every such invoice would be counted twice.
+  const billHasVoucher = b => vouchers.some(v => v.reference === b.number)
+  const legacyPaidBills = bills.filter(b => b.status === 'paid' && !billHasVoucher(b))
+  const paidBillsTotal = legacyPaidBills.reduce((s, b) => s + parseFloat(b.total || 0), 0)
 
   const operating = cashVouchers.filter(v => v.bucket === 'operating')
   const investing = cashVouchers.filter(v => v.bucket === 'investing')
   const financing = cashVouchers.filter(v => v.bucket === 'financing')
 
   // Operating: cash-moving vouchers classified as operating, plus paid
-  // invoices (invoices don't generate a voucher in this version of the app,
-  // so this is the only record we have of that cash actually coming in).
+  // invoices that don't have a real voucher behind them (legacy data).
   const operatingIn = operating.filter(v => v.delta > 0).reduce((s, v) => s + v.delta, 0) + paidBillsTotal
   const operatingOut = operating.filter(v => v.delta < 0).reduce((s, v) => s - v.delta, 0)
   const investingNet = investing.reduce((s, v) => s + v.delta, 0)
@@ -78,9 +83,9 @@ export default function CashFlow() {
       const vd = new Date(v.createdAt)
       return vd.getMonth() === mo && vd.getFullYear() === yr
     })
-    const billsInMonth = bills.filter(b => {
+    const billsInMonth = legacyPaidBills.filter(b => {
       const bd = new Date(b.createdAt)
-      return bd.getMonth() === mo && bd.getFullYear() === yr && b.status === 'paid'
+      return bd.getMonth() === mo && bd.getFullYear() === yr
     }).reduce((s, b) => s + parseFloat(b.total || 0), 0)
 
     const inflow = monthCash.filter(v => v.delta > 0).reduce((s, v) => s + v.delta, 0) + billsInMonth
@@ -90,7 +95,7 @@ export default function CashFlow() {
 
   // Recent transactions
   const transactions = [
-    ...bills.filter(b => b.status === 'paid').map(b => ({
+    ...legacyPaidBills.map(b => ({
       id: b.id, date: b.createdAt, label: `Invoice ${b.number}`,
       amount: parseFloat(b.total || 0), type: 'inflow',
     })),

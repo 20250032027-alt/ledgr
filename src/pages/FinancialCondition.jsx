@@ -261,8 +261,16 @@ export default function FinancialCondition() {
   // Cash. So both paid and unpaid invoices count as revenue; only the asset
   // side (Cash vs A/R) depends on payment status. Without this, any unpaid
   // invoice inflates Assets with nothing on the other side of the equation.
-  const paidBillsBS = bsBills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
-  const unpaidBillsBS = bsBills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  // Newer bills auto-post a real voucher (tagged with reference = bill
+  // number) on creation and on being marked paid, so they already flow
+  // through the ledger above via their own Accounts Receivable / Revenue /
+  // Cash accounts. Only bills predating that feature — with no matching
+  // voucher — need this fallback, or every such invoice gets counted twice.
+  const billHasVoucher = b => vouchers.some(v => v.reference === b.number)
+  const legacyBsBills = bsBills.filter(b => !billHasVoucher(b))
+
+  const paidBillsBS = legacyBsBills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  const unpaidBillsBS = legacyBsBills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
   if (paidBillsBS > 0) currentAssets.push({ name: 'Cash from Collections', amount: paidBillsBS })
   if (unpaidBillsBS > 0) currentAssets.push({ name: 'Accounts Receivable (Invoices)', amount: unpaidBillsBS })
 
@@ -292,8 +300,9 @@ export default function FinancialCondition() {
   // Income Statement figures — its own date range, for display only
   const { revenue, expenses } = isSections
 
-  const paidBillsIS = isBills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
-  const unpaidBillsIS = isBills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  const legacyIsBills = isBills.filter(b => !billHasVoucher(b))
+  const paidBillsIS = legacyIsBills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  const unpaidBillsIS = legacyIsBills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
   const allBillsIS = paidBillsIS + unpaidBillsIS
   if (allBillsIS > 0) {
     const existing = revenue.find(r => r.name === 'Service Revenue')
