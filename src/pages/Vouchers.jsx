@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '../store/useStore.jsx'
 import { fmt, fmtDate, voucherTotals } from '../utils'
-import { Plus, X, Trash2, Pencil, Search, CheckCircle, AlertCircle, FileText, Download } from 'lucide-react'
+import { Plus, X, Trash2, Pencil, Search, CheckCircle, AlertCircle, FileText, Download, BookMarked, ChevronDown } from 'lucide-react'
 
 const TYPES = ['general', 'cash receipt', 'cash disbursement', 'expense', 'adjustment']
 
@@ -132,12 +132,17 @@ function EntryRow({ entry, onChange, onRemove, index }) {
   )
 }
 
-function VoucherModal({ voucher, onClose, onSave, clients, accounts }) {
+function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, onSaveTemplate, onDeleteTemplate }) {
   const blankEntry = () => ({ account: '', description: '', debit: '', credit: '', id: crypto.randomUUID() })
   const [form, setForm] = useState(voucher || {
     type: 'general', date: new Date().toISOString().slice(0, 10),
     reference: '', memo: '', clientId: '', entries: [blankEntry(), blankEntry()],
   })
+
+  // Template UI state
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [templateName, setTemplateName] = useState('')
 
   function setF(k, v) { setForm(f => ({ ...f, [k]: v })) }
   function setEntry(i, e) {
@@ -150,7 +155,33 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts }) {
   }
   function addEntry() { setF('entries', [...form.entries, blankEntry()]) }
 
+  function applyTemplate(tpl) {
+    setForm(f => ({
+      ...f,
+      type: tpl.type || f.type,
+      memo: tpl.memo || f.memo,
+      entries: (tpl.entries || []).map(e => ({ ...e, id: crypto.randomUUID() })),
+    }))
+    setShowTemplates(false)
+  }
+
+  async function handleSaveTemplate() {
+    if (!templateName.trim()) return
+    await onSaveTemplate({
+      name: templateName.trim(),
+      type: form.type,
+      memo: form.memo,
+      entries: form.entries.map(({ id, ...e }) => e),
+    })
+    setTemplateName('')
+    setSavingTemplate(false)
+  }
+
   const { debit, credit, balanced } = voucherTotals(form.entries)
+
+  // Only show template features for adjustment type
+  const isAdjustment = form.type === 'adjustment'
+  const adjustmentTemplates = templates.filter(t => t.type === 'adjustment')
 
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -194,6 +225,121 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts }) {
         {accounts.length === 0 && (
           <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
             Tip: set up your Chart of Accounts first so account names autocomplete here.
+          </div>
+        )}
+
+        {/* Recurring templates — only shown for Adjustment vouchers */}
+        {isAdjustment && (
+          <div style={{
+            marginBottom: 12, border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)', overflow: 'hidden',
+          }}>
+            <div
+              onClick={() => setShowTemplates(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px 12px', background: 'var(--surface2)',
+                cursor: 'pointer', userSelect: 'none', fontSize: 12,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                <BookMarked size={13} color="var(--accent)" />
+                Recurring Templates
+                {adjustmentTemplates.length > 0 && (
+                  <span style={{
+                    background: 'var(--accent)', color: '#fff',
+                    borderRadius: 99, fontSize: 10, padding: '1px 6px', fontWeight: 700,
+                  }}>
+                    {adjustmentTemplates.length}
+                  </span>
+                )}
+              </div>
+              <ChevronDown size={13} color="var(--text-3)"
+                style={{ transform: showTemplates ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
+              />
+            </div>
+
+            {showTemplates && (
+              <div style={{ padding: '10px 12px' }}>
+                {adjustmentTemplates.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 8 }}>
+                    No saved templates yet. Fill in the entries below and save as a template.
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: 10 }}>
+                    {adjustmentTemplates.map(tpl => (
+                      <div key={tpl.id} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '6px 8px', borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--border)', marginBottom: 6,
+                        background: 'var(--bg)',
+                      }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600 }}>{tpl.name}</div>
+                          {tpl.memo && (
+                            <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{tpl.memo}</div>
+                          )}
+                          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                            {(tpl.entries || []).length} line{(tpl.entries || []).length !== 1 ? 's' : ''}
+                            {' · '}
+                            {(tpl.entries || []).filter(e => parseFloat(e.debit || 0) > 0).map(e => e.account).filter(Boolean).join(', ')}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            className="btn btn-ghost"
+                            style={{ fontSize: 11, padding: '4px 10px' }}
+                            onClick={() => applyTemplate(tpl)}
+                          >
+                            Use
+                          </button>
+                          <button
+                            className="icon-btn"
+                            style={{ color: 'var(--red)' }}
+                            onClick={() => onDeleteTemplate(tpl.id)}
+                            title="Delete template"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Save current entries as template */}
+                {savingTemplate ? (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      className="form-input"
+                      style={{ fontSize: 12, padding: '5px 8px', flex: 1 }}
+                      placeholder="Template name (e.g. Monthly Depreciation)"
+                      value={templateName}
+                      onChange={e => setTemplateName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSaveTemplate()}
+                      autoFocus
+                    />
+                    <button className="btn btn-primary" style={{ fontSize: 12, padding: '5px 12px' }}
+                      disabled={!templateName.trim()}
+                      onClick={handleSaveTemplate}>
+                      Save
+                    </button>
+                    <button className="btn btn-ghost" style={{ fontSize: 12, padding: '5px 10px' }}
+                      onClick={() => { setSavingTemplate(false); setTemplateName('') }}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 11, padding: '4px 10px' }}
+                    onClick={() => setSavingTemplate(true)}
+                  >
+                    <Plus size={12} /> Save current entries as template
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -253,7 +399,7 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts }) {
 }
 
 export default function Vouchers() {
-  const { vouchers, addVoucher, updateVoucher, deleteVoucher, clients, accounts, settings } = useStore()
+  const { vouchers, addVoucher, updateVoucher, deleteVoucher, clients, accounts, templates, addTemplate, deleteTemplate, settings } = useStore()
   const [modal, setModal] = useState(null)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -385,6 +531,9 @@ export default function Vouchers() {
           voucher={modal === 'new' ? null : modal}
           clients={clients}
           accounts={accounts}
+          templates={templates}
+          onSaveTemplate={addTemplate}
+          onDeleteTemplate={deleteTemplate}
           onClose={() => setModal(null)}
           onSave={form => {
             if (modal === 'new') addVoucher(form)

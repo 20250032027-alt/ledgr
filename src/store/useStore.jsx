@@ -41,6 +41,7 @@ export function StoreProvider({ children, userId }) {
   const [vouchers, setVouchers] = useState([])
   const [bills, setBills] = useState([])
   const [accounts, setAccounts] = useState([])
+  const [templates, setTemplates] = useState([])
   const [settings, setSettings] = useState(defaultSettings)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -53,15 +54,16 @@ export function StoreProvider({ children, userId }) {
       setLoading(true)
       setError(null)
       try {
-        const [accRes, cliRes, vouRes, billRes, setRes] = await Promise.all([
+        const [accRes, cliRes, vouRes, billRes, setRes, tplRes] = await Promise.all([
           supabase.from('accounts').select('*'),
           supabase.from('clients').select('*').order('created_at'),
           supabase.from('vouchers').select('*').order('created_at'),
           supabase.from('bills').select('*').order('created_at'),
           supabase.from('settings').select('*').eq('user_id', userId).maybeSingle(),
+          supabase.from('voucher_templates').select('*').order('created_at'),
         ])
         if (cancelled) return
-        for (const res of [accRes, cliRes, vouRes, billRes, setRes]) {
+        for (const res of [accRes, cliRes, vouRes, billRes, setRes, tplRes]) {
           if (res.error) throw res.error
         }
 
@@ -69,6 +71,7 @@ export function StoreProvider({ children, userId }) {
         setClients((cliRes.data || []).map(fromDb))
         setVouchers((vouRes.data || []).map(fromDb))
         setBills((billRes.data || []).map(fromDb))
+        setTemplates((tplRes.data || []).map(fromDb))
 
         if (setRes.data) {
           setSettings(fromDb(setRes.data))
@@ -179,6 +182,20 @@ export function StoreProvider({ children, userId }) {
     setAccounts(a => sortByCode([...a, ...(data || []).map(fromDb)]))
   }
 
+  // ---- Voucher Templates ----
+  async function addTemplate(template) {
+    const { data, error: e } = await supabase.from('voucher_templates').insert(toDb(template)).select().single()
+    if (e) { fail(e, 'Could not save template'); return null }
+    const rec = fromDb(data)
+    setTemplates(t => [...t, rec])
+    return rec.id
+  }
+  async function deleteTemplate(id) {
+    const { error: e } = await supabase.from('voucher_templates').delete().eq('id', id)
+    if (e) { fail(e, 'Could not delete template'); return }
+    setTemplates(t => t.filter(x => x.id !== id))
+  }
+
   // ---- Settings ----
   async function updateSettings(patch) {
     const next = { ...settings, ...patch }
@@ -200,12 +217,13 @@ export function StoreProvider({ children, userId }) {
 
   return (
     <StoreContext.Provider value={{
-      clients, vouchers, bills, accounts, settings, loading, error,
+      clients, vouchers, bills, accounts, templates, settings, loading, error,
       clearError: () => setError(null),
       addClient, updateClient, deleteClient,
       addVoucher, updateVoucher, deleteVoucher,
       addBill, updateBill, deleteBill,
       addAccount, updateAccount, deleteAccount, seedDefaultAccounts,
+      addTemplate, deleteTemplate,
       updateSettings, deleteAllData,
     }}>
       {children}
