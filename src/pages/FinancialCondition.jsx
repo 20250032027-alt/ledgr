@@ -1,7 +1,86 @@
 import { useState, useMemo } from 'react'
 import { useStore } from '../store/useStore.jsx'
 import { fmt } from '../utils'
-import { BarChart3, X } from 'lucide-react'
+import { BarChart3, X, Download } from 'lucide-react'
+
+async function exportFinancialReportToExcel({
+  currentAssets, fixedAssets, currentLiabilities, equity,
+  revenue, expenses,
+  totalCurrentAssets, totalFixedAssets, totalAssets,
+  totalLiabilities, totalEquity, netIncome, totalLE,
+  totalRevenue, totalExpenses,
+  ratios, asOf, incomeFrom, incomeTo, cur,
+}) {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.utils.book_new()
+  const MONEY = '#,##0.00;(#,##0.00);"-"'
+
+  function makeSheet(rows) {
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = [{ wch: 36 }, { wch: 18 }]
+    // Apply money format to column B (index 1)
+    Object.keys(ws).forEach(ref => {
+      if (ref[0] === '!' ) return
+      const col = XLSX.utils.decode_cell(ref).c
+      if (col === 1 && typeof ws[ref].v === 'number') ws[ref].z = MONEY
+    })
+    return ws
+  }
+
+  // Balance Sheet
+  const bsRows = [
+    ['BALANCE SHEET'],
+    ['As of', asOf || 'All dates'],
+    [],
+    ['ASSETS'],
+    ['Current Assets'],
+    ...currentAssets.map(r => [`  ${r.name}`, r.amount]),
+    ['Total Current Assets', totalCurrentAssets],
+    ...(fixedAssets.length ? [
+      ['Fixed Assets'],
+      ...fixedAssets.map(r => [`  ${r.name}`, r.amount]),
+      ['Total Fixed Assets', totalFixedAssets],
+    ] : []),
+    ['TOTAL ASSETS', totalAssets],
+    [],
+    ['LIABILITIES & EQUITY'],
+    ['Current Liabilities'],
+    ...currentLiabilities.map(r => [`  ${r.name}`, r.amount]),
+    ['Total Liabilities', totalLiabilities],
+    ['Equity'],
+    ...equity.map(r => [`  ${r.name}`, r.amount]),
+    ['Total Equity', totalEquity],
+    ['Net Income (period)', netIncome],
+    ['TOTAL L + E', totalLE],
+    [],
+    [Math.abs(totalAssets - totalLE) < 0.01 ? '✓ Balance sheet balances' : `⚠ Out of balance by ${Math.abs(totalAssets - totalLE).toFixed(2)}`],
+  ]
+
+  // Income Statement
+  const isRows = [
+    ['INCOME STATEMENT'],
+    ['Period', incomeFrom || incomeTo ? `${incomeFrom || '…'} → ${incomeTo || '…'}` : 'All dates'],
+    [],
+    ['REVENUE'],
+    ...revenue.map(r => [`  ${r.name}`, r.amount]),
+    ['Total Revenue', totalRevenue],
+    [],
+    ['EXPENSES'],
+    ...expenses.map(r => [`  ${r.name}`, r.amount]),
+    ['Total Expenses', totalExpenses],
+    [],
+    ['NET INCOME', netIncome],
+    [],
+    ['KEY RATIOS'],
+    ...ratios.map(r => [r.label, r.value]),
+  ]
+
+  XLSX.utils.book_append_sheet(wb, makeSheet(bsRows), 'Balance Sheet')
+  XLSX.utils.book_append_sheet(wb, makeSheet(isRows), 'Income Statement')
+
+  const dateStr = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(wb, `ledgr-financial-report-${dateStr}.xlsx`)
+}
 
 function coaTypeToSection(account) {
   const type = account.type
@@ -231,6 +310,13 @@ export default function FinancialCondition() {
     .some(r => r.name.includes('⚠'))
 
   const hasDateFilters = asOf || incomeFrom || incomeTo
+  const [exporting, setExporting] = useState(false)
+
+  const ratios = [
+    { label: 'Current Ratio', value: totalLiabilities > 0 ? (totalCurrentAssets / totalLiabilities).toFixed(2) : 'N/A', note: 'Current Assets / Current Liabilities' },
+    { label: 'Gross Margin', value: totalRevenue > 0 ? `${((netIncome / totalRevenue) * 100).toFixed(1)}%` : 'N/A', note: 'Net Income / Revenue' },
+    { label: 'Debt to Equity', value: totalEquity > 0 ? (totalLiabilities / totalEquity).toFixed(2) : 'N/A', note: 'Total Liabilities / Total Equity' },
+  ]
 
   function clearDates() { setAsOf(''); setIncomeFrom(''); setIncomeTo('') }
 
@@ -244,10 +330,29 @@ export default function FinancialCondition() {
           <div className="page-h1">Financial Condition & Operations</div>
           <div className="page-sub">Balance Sheet · Income Statement</div>
         </div>
+        <button
+          className="btn btn-ghost"
+          disabled={!hasData || exporting}
+          onClick={async () => {
+            setExporting(true)
+            try {
+              await exportFinancialReportToExcel({
+                currentAssets, fixedAssets, currentLiabilities, equity,
+                revenue, expenses,
+                totalCurrentAssets, totalFixedAssets, totalAssets,
+                totalLiabilities, totalEquity, netIncome, totalLE,
+                totalRevenue, totalExpenses,
+                ratios, asOf, incomeFrom, incomeTo, cur,
+              })
+            } finally { setExporting(false) }
+          }}
+        >
+          <Download size={15} /> {exporting ? 'Exporting…' : 'Export to Excel'}
+        </button>
       </div>
 
       {/* Date filter toolbar */}
-      <div style={{
+      <div className="financial-date-toolbar" style={{
         display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center',
         marginBottom: 16, padding: '12px 16px',
         background: 'var(--surface2)', borderRadius: 'var(--radius-sm)',
@@ -402,23 +507,7 @@ export default function FinancialCondition() {
 
               <div className="card">
                 <div className="card-title" style={{ marginBottom: 14 }}>Key Ratios</div>
-                {[
-                  {
-                    label: 'Current Ratio',
-                    value: totalLiabilities > 0 ? (totalCurrentAssets / totalLiabilities).toFixed(2) : 'N/A',
-                    note: 'Current Assets / Current Liabilities',
-                  },
-                  {
-                    label: 'Gross Margin',
-                    value: totalRevenue > 0 ? `${((netIncome / totalRevenue) * 100).toFixed(1)}%` : 'N/A',
-                    note: 'Net Income / Revenue',
-                  },
-                  {
-                    label: 'Debt to Equity',
-                    value: totalEquity > 0 ? (totalLiabilities / totalEquity).toFixed(2) : 'N/A',
-                    note: 'Total Liabilities / Total Equity',
-                  },
-                ].map(r => (
+                {ratios.map(r => (
                   <div key={r.label} style={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
                     padding: '10px 0', borderBottom: '1px solid var(--border)',

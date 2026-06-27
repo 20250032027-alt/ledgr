@@ -1,12 +1,13 @@
+import { useEffect } from 'react'
 import { useStore } from '../store/useStore.jsx'
 import { fmt, fmtDate } from '../utils'
 import {
   Users, FileText, Receipt, TrendingUp, TrendingDown,
-  ArrowUpRight, ArrowDownRight, Circle,
+  ArrowUpRight, ArrowDownRight, Circle, RefreshCw,
 } from 'lucide-react'
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts'
 
-function StatCard({ label, value, icon: Icon, change, changeDir }) {
+function StatCard({ label, value, icon: Icon, changeDir }) {
   return (
     <div className="stat-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -15,15 +16,16 @@ function StatCard({ label, value, icon: Icon, change, changeDir }) {
           width: 32, height: 32, borderRadius: 8,
           background: 'var(--surface2)',
           display: 'grid', placeItems: 'center', color: 'var(--accent)',
+          flexShrink: 0,
         }}>
           <Icon size={15} />
         </div>
       </div>
-      <div className="stat-value">{value}</div>
-      {change != null && (
+      <div className="stat-value" style={{ wordBreak: 'break-word' }}>{value}</div>
+      {changeDir && (
         <div className={`stat-change ${changeDir === 'up' ? 'stat-up' : 'stat-down'}`}>
           {changeDir === 'up' ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-          {change}
+          {changeDir === 'up' ? 'Income' : 'Expense'}
         </div>
       )}
     </div>
@@ -48,30 +50,60 @@ const CustomTooltip = ({ active, payload, label }) => {
 }
 
 export default function Dashboard() {
-  const { clients, vouchers, bills, settings } = useStore()
+  const { clients, vouchers, bills, accounts, settings, refresh, loading } = useStore()
   const cur = settings.currency
 
-  const totalRevenue = bills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
-  const totalUnpaid = bills.filter(b => b.status === 'unpaid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
-  const totalExpenses = vouchers.filter(v => v.type === 'expense')
-    .reduce((s, v) => s + (v.entries || []).reduce((a, e) => a + parseFloat(e.debit || 0), 0), 0)
+  // Refresh data when dashboard comes into focus (mobile-friendly)
+  useEffect(() => {
+    function onFocus() { refresh() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
 
-  // Build last 6 months chart data
+  // Revenue = all bills (accrual — same as FinancialCondition)
+  const totalRevenue = bills.reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  const totalUnpaid = bills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  const totalPaid = bills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+
+  // Expenses = sum of all expense-type account entries from vouchers
+  // (uses Chart of Accounts type, same logic as FinancialCondition)
+  const expenseAccountNames = new Set(
+    accounts.filter(a => a.type === 'expense').map(a => a.name.trim().toLowerCase())
+  )
+  const totalExpenses = vouchers.reduce((s, v) => {
+    return s + (v.entries || []).reduce((a, e) => {
+      const isExpense = expenseAccountNames.has((e.account || '').trim().toLowerCase())
+      return a + (isExpense ? parseFloat(e.debit || 0) : 0)
+    }, 0)
+  }, 0)
+
+  const netPosition = totalRevenue - totalExpenses
+
+  // Build last 6 months chart data using voucher date field
   const months = []
   for (let i = 5; i >= 0; i--) {
     const d = new Date()
+    d.setDate(1)
     d.setMonth(d.getMonth() - i)
     const label = d.toLocaleString('en', { month: 'short' })
     const yr = d.getFullYear()
-    const mo = d.getMonth()
+    const mo = String(d.getMonth() + 1).padStart(2, '0')
+    const monthPrefix = `${yr}-${mo}`
+
     const rev = bills.filter(b => {
-      const bd = new Date(b.createdAt)
-      return bd.getMonth() === mo && bd.getFullYear() === yr && b.status === 'paid'
+      const dateStr = b.date || (b.createdAt ? b.createdAt.slice(0, 7) : '')
+      return dateStr.startsWith(monthPrefix)
     }).reduce((s, b) => s + parseFloat(b.total || 0), 0)
-    const exp = vouchers.filter(v => {
-      const vd = new Date(v.createdAt)
-      return vd.getMonth() === mo && vd.getFullYear() === yr && v.type === 'expense'
-    }).reduce((s, v) => s + (v.entries || []).reduce((a, e) => a + parseFloat(e.debit || 0), 0), 0)
+
+    const exp = vouchers.reduce((s, v) => {
+      const dateStr = v.date || (v.createdAt ? v.createdAt.slice(0, 7) : '')
+      if (!dateStr.startsWith(monthPrefix)) return s
+      return s + (v.entries || []).reduce((a, e) => {
+        const isExpense = expenseAccountNames.has((e.account || '').trim().toLowerCase())
+        return a + (isExpense ? parseFloat(e.debit || 0) : 0)
+      }, 0)
+    }, 0)
+
     months.push({ label, revenue: rev, expenses: exp })
   }
 
@@ -84,13 +116,22 @@ export default function Dashboard() {
           <div className="page-h1">Overview</div>
           <div className="page-sub">Financial snapshot</div>
         </div>
+        <button
+          className="btn btn-ghost"
+          onClick={refresh}
+          disabled={loading}
+          style={{ fontSize: 12 }}
+        >
+          <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
       </div>
 
       <div className="stat-grid">
         <StatCard label="Total Clients" value={clients.length} icon={Users} />
-        <StatCard label="Revenue" value={fmt(totalRevenue, cur)} icon={TrendingUp} changeDir="up" />
-        <StatCard label="Expenses" value={fmt(totalExpenses, cur)} icon={TrendingDown} changeDir="down" />
-        <StatCard label="Outstanding" value={fmt(totalUnpaid, cur)} icon={Receipt} changeDir="down" />
+        <StatCard label="Total Revenue" value={fmt(totalRevenue, cur)} icon={TrendingUp} changeDir="up" />
+        <StatCard label="Total Expenses" value={fmt(totalExpenses, cur)} icon={TrendingDown} changeDir="down" />
+        <StatCard label="Outstanding" value={fmt(totalUnpaid, cur)} icon={Receipt} />
       </div>
 
       <div className="two-col" style={{ marginBottom: 16 }}>
@@ -138,13 +179,14 @@ export default function Dashboard() {
                 <div key={b.id} style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '8px 0', borderBottom: '1px solid var(--border)',
+                  gap: 8,
                 }}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{b.number}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{b.clientName}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.number}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.clientName}</div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div className="text-mono">{fmt(b.total, cur)}</div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div className="text-mono" style={{ fontSize: 12 }}>{fmt(b.total, cur)}</div>
                     <span className={`badge ${b.status === 'paid' ? 'badge-green' : b.status === 'overdue' ? 'badge-red' : 'badge-amber'}`}>
                       <Circle size={5} fill="currentColor" />
                       {b.status}
@@ -173,12 +215,13 @@ export default function Dashboard() {
                 <div key={v.id} style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                   padding: '8px 0', borderBottom: '1px solid var(--border)',
+                  gap: 8,
                 }}>
-                  <div>
+                  <div style={{ minWidth: 0 }}>
                     <span style={{ fontSize: 13, fontWeight: 500 }}>{v.number}</span>
                     <span style={{ fontSize: 11, color: 'var(--text-3)', marginLeft: 8 }}>{v.type}</span>
                   </div>
-                  <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{fmtDate(v.createdAt)}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-2)', flexShrink: 0 }}>{v.date || fmtDate(v.createdAt)}</span>
                 </div>
               ))}
             </div>
@@ -195,18 +238,20 @@ export default function Dashboard() {
               { label: 'Total Invoices', val: bills.length },
               { label: 'Paid Invoices', val: bills.filter(b => b.status === 'paid').length },
               { label: 'Overdue Invoices', val: bills.filter(b => b.status === 'overdue').length },
-              { label: 'Net Position', val: fmt(totalRevenue - totalExpenses, cur), highlight: true },
+              { label: 'Collected', val: fmt(totalPaid, cur), color: 'var(--green)' },
+              { label: 'Net Position', val: fmt(netPosition, cur), color: netPosition >= 0 ? 'var(--green)' : 'var(--red)', bold: true },
             ].map(r => (
               <div key={r.label} style={{
                 display: 'flex', justifyContent: 'space-between',
                 padding: '7px 0', borderBottom: '1px solid var(--border)',
-                fontSize: 13,
+                fontSize: 13, gap: 8,
               }}>
                 <span style={{ color: 'var(--text-2)' }}>{r.label}</span>
                 <span style={{
                   fontFamily: 'var(--mono)',
-                  color: r.highlight ? 'var(--green)' : 'var(--text-1)',
-                  fontWeight: r.highlight ? 600 : 400,
+                  color: r.color || 'var(--text-1)',
+                  fontWeight: r.bold ? 600 : 400,
+                  flexShrink: 0,
                 }}>{r.val}</span>
               </div>
             ))}

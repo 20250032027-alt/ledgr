@@ -46,6 +46,8 @@ export function StoreProvider({ children, userId }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  const refreshRef = useState(null)
+
   useEffect(() => {
     if (!userId) return
     let cancelled = false
@@ -108,9 +110,12 @@ export function StoreProvider({ children, userId }) {
         setLoading(false)
       }
     }
+    refreshRef[0] = loadAll
     loadAll()
     return () => { cancelled = true }
   }, [userId])
+
+  function refresh() { if (refreshRef[0]) refreshRef[0]() }
 
   function fail(e, fallbackMsg) {
     setError(e?.message || fallbackMsg)
@@ -239,6 +244,7 @@ export function StoreProvider({ children, userId }) {
     <StoreContext.Provider value={{
       clients, vouchers, bills, accounts, templates, settings, loading, error,
       clearError: () => setError(null),
+      refresh,
       addClient, updateClient, deleteClient,
       addVoucher, updateVoucher, deleteVoucher,
       addBill, updateBill, deleteBill,
