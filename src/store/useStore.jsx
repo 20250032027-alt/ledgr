@@ -179,7 +179,7 @@ export function StoreProvider({ children, userId }) {
 
     // Auto-post: DR chosen Receivable Account / CR Service Revenue
     const arAccount = bill.receivableAccount || coaName('Accounts Receivable')
-    const revAccount = coaName('Service Revenue', 'Sales Revenue')
+    const revAccount = bill.revenueAccount || coaName('Service Revenue', 'Sales Revenue')
     const vNum = `JE-INV-${num}`
     await supabase.from('vouchers').insert(toDb({
       number: vNum,

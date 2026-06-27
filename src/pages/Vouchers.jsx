@@ -77,18 +77,31 @@ async function exportVouchersToExcel(vouchers, clients) {
   XLSX.writeFile(wb, `ledgr-vouchers-${dateStr}.xlsx`)
 }
 
-function EntryRow({ entry, onChange, onRemove, index }) {
+function EntryRow({ entry, onChange, onRemove, accounts }) {
+  const accountNames = new Set(accounts.map(a => a.name.trim().toLowerCase()))
+  const val = (entry.account || '').trim()
+  const isInvalid = val.length > 0 && !accountNames.has(val.toLowerCase())
+
   return (
     <tr>
       <td>
         <input
           className="form-input"
-          style={{ fontSize: 12, padding: '5px 8px' }}
+          style={{
+            fontSize: 12, padding: '5px 8px',
+            borderColor: isInvalid ? 'var(--red)' : undefined,
+            background: isInvalid ? 'rgba(239,68,68,0.07)' : undefined,
+          }}
           list="accounts-list"
           value={entry.account}
           onChange={e => onChange({ ...entry, account: e.target.value })}
           placeholder="Account name"
         />
+        {isInvalid && (
+          <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 2, lineHeight: 1.3 }}>
+            ⚠ Not in Chart of Accounts
+          </div>
+        )}
       </td>
       <td>
         <input
@@ -103,10 +116,7 @@ function EntryRow({ entry, onChange, onRemove, index }) {
         <input
           className="form-input"
           style={{ fontSize: 12, padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--mono)' }}
-          type="number"
-          min="0"
-          step="0.01"
-          value={entry.debit}
+          type="number" min="0" step="0.01" value={entry.debit}
           onChange={e => onChange({ ...entry, debit: e.target.value, credit: e.target.value ? '' : entry.credit })}
           placeholder="0.00"
         />
@@ -115,10 +125,7 @@ function EntryRow({ entry, onChange, onRemove, index }) {
         <input
           className="form-input"
           style={{ fontSize: 12, padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--mono)' }}
-          type="number"
-          min="0"
-          step="0.01"
-          value={entry.credit}
+          type="number" min="0" step="0.01" value={entry.credit}
           onChange={e => onChange({ ...entry, credit: e.target.value, debit: e.target.value ? '' : entry.debit })}
           placeholder="0.00"
         />
@@ -356,9 +363,10 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
             </thead>
             <tbody>
               {form.entries.map((e, i) => (
-                <EntryRow key={e.id} entry={e} index={i}
+                <EntryRow key={e.id} entry={e}
                   onChange={upd => setEntry(i, upd)}
                   onRemove={() => removeEntry(i)}
+                  accounts={accounts}
                 />
               ))}
             </tbody>
@@ -388,7 +396,11 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
 
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={!balanced || form.entries.length === 0}
+          <button className="btn btn-primary"
+            disabled={!balanced || form.entries.length === 0 || form.entries.some(e => {
+              const v = (e.account || '').trim()
+              return v.length > 0 && !accounts.map(a => a.name.trim().toLowerCase()).includes(v.toLowerCase())
+            })}
             onClick={() => onSave(form)}>
             {voucher ? 'Save Changes' : 'Post Voucher'}
           </button>

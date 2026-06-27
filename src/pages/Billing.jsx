@@ -243,6 +243,7 @@ function BillModal({ bill, onClose, onSave, clients, bills, accounts, taxRate })
     date: new Date().toISOString().slice(0, 10),
     dueDate: '', lines: [blankLine()], notes: '', applyTax: true,
     receivableAccount: '',
+    revenueAccount: '',
   })
 
   function setF(k, v) { setForm(f => ({ ...f, [k]: v })) }
@@ -256,10 +257,11 @@ function BillModal({ bill, onClose, onSave, clients, bills, accounts, taxRate })
     setForm(f => ({ ...f, clientId: id, clientName: c?.name || '' }))
   }
 
-  // Receivable accounts from CoA (asset type)
+  // Receivable accounts (asset type) and revenue accounts (revenue type)
   const receivableAccounts = accounts.filter(a => a.type === 'asset')
-  // Default to first account containing 'receivable' in name
+  const revenueAccounts = accounts.filter(a => a.type === 'revenue')
   const defaultAR = receivableAccounts.find(a => a.name.toLowerCase().includes('receivable'))
+  const defaultRev = revenueAccounts.find(a => a.name.toLowerCase().includes('service')) || revenueAccounts[0]
 
   // Outstanding invoices for selected client
   const clientOutstanding = form.clientId
@@ -309,18 +311,19 @@ function BillModal({ bill, onClose, onSave, clients, bills, accounts, taxRate })
           </div>
         </div>
 
-        {/* Receivable account selector */}
+        {/* Accounting Entry Preview */}
         <div style={{
-          marginBottom: 14, padding: '10px 14px',
+          marginBottom: 14, padding: '12px 14px',
           background: 'var(--surface2)', borderRadius: 'var(--radius-sm)',
           border: '1px solid var(--border)',
         }}>
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-3)', marginBottom: 8 }}>
-            Accounting Entry Preview
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', color: 'var(--text-3)', marginBottom: 10 }}>
+            Accounting Entry — on invoice creation
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <label className="form-label" style={{ fontSize: 11 }}>Debit (Receivable Account)</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 24px 1fr', gap: 8, alignItems: 'end' }}>
+            {/* DR side */}
+            <div>
+              <label className="form-label" style={{ fontSize: 11, color: 'var(--accent)' }}>DR — Debit (Receivable)</label>
               <select className="form-select" style={{ fontSize: 12 }}
                 value={form.receivableAccount || defaultAR?.name || ''}
                 onChange={e => setF('receivableAccount', e.target.value)}>
@@ -329,19 +332,32 @@ function BillModal({ bill, onClose, onSave, clients, bills, accounts, taxRate })
                     {a.code ? `${a.code} · ` : ''}{a.name}
                   </option>
                 ))}
+                {receivableAccounts.length === 0 && <option value="Accounts Receivable">Accounts Receivable</option>}
               </select>
             </div>
-            <div style={{ fontSize: 13, color: 'var(--text-3)', paddingTop: 18 }}>→</div>
-            <div style={{ flex: 1, minWidth: 160, fontSize: 12, paddingTop: 18 }}>
-              <div style={{ color: 'var(--text-3)', fontSize: 11 }}>Credit (Revenue)</div>
-              <div style={{ fontWeight: 600, color: 'var(--green)' }}>Service Revenue</div>
+            {/* Arrow */}
+            <div style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: 16, paddingBottom: 6 }}>⇄</div>
+            {/* CR side */}
+            <div>
+              <label className="form-label" style={{ fontSize: 11, color: 'var(--green)' }}>CR — Credit (Revenue)</label>
+              <select className="form-select" style={{ fontSize: 12 }}
+                value={form.revenueAccount || defaultRev?.name || ''}
+                onChange={e => setF('revenueAccount', e.target.value)}>
+                {revenueAccounts.map(a => (
+                  <option key={a.id} value={a.name}>
+                    {a.code ? `${a.code} · ` : ''}{a.name}
+                  </option>
+                ))}
+                {revenueAccounts.length === 0 && <option value="Service Revenue">Service Revenue</option>}
+              </select>
             </div>
-            {total > 0 && (
-              <div style={{ fontSize: 13, fontFamily: 'var(--mono)', fontWeight: 700, paddingTop: 18, color: 'var(--accent)' }}>
-                {fmt(total)}
-              </div>
-            )}
           </div>
+          {total > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+              <span style={{ color: 'var(--text-3)' }}>Amount to be posted</span>
+              <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--accent)' }}>{fmt(total)}</span>
+            </div>
+          )}
         </div>
 
         {/* Outstanding receivables warning */}
@@ -395,16 +411,31 @@ function BillModal({ bill, onClose, onSave, clients, bills, accounts, taxRate })
           <Plus size={13} /> Add Line
         </button>
 
-        {/* Totals */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', padding: '12px 16px', minWidth: 220 }}>
-            {[{ label: 'Subtotal', val: fmt(subtotal) }, { label: `VAT (${taxRate}%)`, val: fmt(tax) }].map(r => (
-              <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
+        {/* Totals — clean right-aligned breakdown */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4, marginBottom: 4 }}>
+          <div style={{
+            width: 260, borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border)', overflow: 'hidden',
+          }}>
+            {[
+              { label: 'Subtotal', val: subtotal },
+              { label: `VAT (${taxRate}%)`, val: tax },
+            ].map(r => (
+              <div key={r.label} style={{
+                display: 'flex', justifyContent: 'space-between',
+                padding: '7px 14px', borderBottom: '1px solid var(--border)',
+                fontSize: 12,
+              }}>
                 <span style={{ color: 'var(--text-2)' }}>{r.label}</span>
-                <span style={{ fontFamily: 'var(--mono)' }}>{r.val}</span>
+                <span style={{ fontFamily: 'var(--mono)' }}>{fmt(r.val)}</span>
               </div>
             ))}
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border2)', paddingTop: 8, fontWeight: 700, fontSize: 14 }}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between',
+              padding: '10px 14px',
+              background: 'var(--surface2)',
+              fontSize: 14, fontWeight: 800,
+            }}>
               <span>Total</span>
               <span style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>{fmt(total)}</span>
             </div>
@@ -422,7 +453,11 @@ function BillModal({ bill, onClose, onSave, clients, bills, accounts, taxRate })
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary"
             disabled={!form.clientId || form.lines.every(l => !l.rate)}
-            onClick={() => onSave({ ...form, subtotal, tax, total, receivableAccount: form.receivableAccount || defaultAR?.name || 'Accounts Receivable' })}>
+            onClick={() => onSave({
+              ...form, subtotal, tax, total,
+              receivableAccount: form.receivableAccount || defaultAR?.name || 'Accounts Receivable',
+              revenueAccount: form.revenueAccount || defaultRev?.name || 'Service Revenue',
+            })}>
             {bill ? 'Save Changes' : 'Create Invoice'}
           </button>
         </div>
