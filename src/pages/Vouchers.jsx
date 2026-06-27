@@ -1,9 +1,75 @@
 import { useState } from 'react'
 import { useStore } from '../store/useStore.jsx'
 import { fmt, fmtDate, voucherTotals } from '../utils'
-import { Plus, X, Trash2, Pencil, Search, CheckCircle, AlertCircle, FileText } from 'lucide-react'
+import { Plus, X, Trash2, Pencil, Search, CheckCircle, AlertCircle, FileText, Download } from 'lucide-react'
 
 const TYPES = ['general', 'cash receipt', 'cash disbursement', 'expense', 'adjustment']
+
+const MONEY_FMT = '#,##0.00;(#,##0.00);"-"'
+
+function setColumnMoneyFormat(XLSX, ws, rowCount, colIndexes) {
+  colIndexes.forEach(c => {
+    for (let r = 0; r < rowCount; r++) {
+      const ref = XLSX.utils.encode_cell({ r: r + 1, c }) // +1 to skip header row
+      if (ws[ref]) ws[ref].z = MONEY_FMT
+    }
+  })
+}
+
+async function exportVouchersToExcel(vouchers, clients) {
+  const XLSX = await import('xlsx')
+  const clientName = id => clients.find(c => c.id === id)?.name || ''
+
+  const summaryRows = vouchers.map(v => {
+    const { debit, credit, balanced } = voucherTotals(v.entries)
+    return {
+      'Voucher #': v.number,
+      Type: v.type,
+      Date: v.date || fmtDate(v.createdAt),
+      Reference: v.reference || '',
+      Client: clientName(v.clientId),
+      Memo: v.memo || '',
+      'Debit Total': debit,
+      'Credit Total': credit,
+      Balanced: balanced ? 'Yes' : 'No',
+    }
+  })
+
+  const entryRows = []
+  vouchers.forEach(v => {
+    ;(v.entries || []).forEach(e => {
+      entryRows.push({
+        'Voucher #': v.number,
+        Date: v.date || fmtDate(v.createdAt),
+        Account: e.account || '',
+        Description: e.description || '',
+        Debit: parseFloat(e.debit || 0),
+        Credit: parseFloat(e.credit || 0),
+      })
+    })
+  })
+
+  const wb = XLSX.utils.book_new()
+
+  const wsSummary = XLSX.utils.json_to_sheet(summaryRows)
+  setColumnMoneyFormat(XLSX, wsSummary, summaryRows.length, [6, 7])
+  wsSummary['!cols'] = [
+    { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 },
+    { wch: 18 }, { wch: 28 }, { wch: 13 }, { wch: 13 }, { wch: 9 },
+  ]
+
+  const wsEntries = XLSX.utils.json_to_sheet(entryRows)
+  setColumnMoneyFormat(XLSX, wsEntries, entryRows.length, [4, 5])
+  wsEntries['!cols'] = [
+    { wch: 12 }, { wch: 12 }, { wch: 22 }, { wch: 30 }, { wch: 13 }, { wch: 13 },
+  ]
+
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Vouchers')
+  XLSX.utils.book_append_sheet(wb, wsEntries, 'Entries')
+
+  const dateStr = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(wb, `ledgr-vouchers-${dateStr}.xlsx`)
+}
 
 function EntryRow({ entry, onChange, onRemove, index }) {
   return (
@@ -185,6 +251,7 @@ export default function Vouchers() {
   const [modal, setModal] = useState(null)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
+  const [exporting, setExporting] = useState(false)
 
   const filtered = vouchers.filter(v => {
     const q = search.toLowerCase()
@@ -202,9 +269,25 @@ export default function Vouchers() {
           <div className="page-h1">Vouchers</div>
           <div className="page-sub">{vouchers.length} journal entr{vouchers.length !== 1 ? 'ies' : 'y'}</div>
         </div>
-        <button className="btn btn-primary" onClick={() => setModal('new')}>
-          <Plus size={15} /> New Voucher
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn btn-ghost"
+            disabled={filtered.length === 0 || exporting}
+            onClick={async () => {
+              setExporting(true)
+              try {
+                await exportVouchersToExcel(filtered, clients)
+              } finally {
+                setExporting(false)
+              }
+            }}
+          >
+            <Download size={15} /> {exporting ? 'Exporting…' : 'Export to Excel'}
+          </button>
+          <button className="btn btn-primary" onClick={() => setModal('new')}>
+            <Plus size={15} /> New Voucher
+          </button>
+        </div>
       </div>
 
       <div className="toolbar">
