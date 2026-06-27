@@ -1,18 +1,14 @@
+import { useState, useMemo } from 'react'
 import { useStore } from '../store/useStore.jsx'
 import { fmt } from '../utils'
-import { BarChart3 } from 'lucide-react'
+import { BarChart3, X } from 'lucide-react'
 
-// Map Chart of Accounts `type` -> which section of the reports it belongs to.
-// Assets are split into current vs fixed by code range (1000–1499 = current, 1500+ = fixed)
-// or by keyword fallback if no code exists.
 function coaTypeToSection(account) {
   const type = account.type
   if (type === 'asset') {
-    // Use account code to distinguish current vs fixed assets, with keyword fallback.
     const code = parseInt(account.code || '0', 10)
     if (code >= 1500 && code < 2000) return 'fixed-asset'
     if (code >= 1000 && code < 1500) return 'current-asset'
-    // Keyword fallback for accounts without codes
     const n = account.name.toLowerCase()
     if (n.includes('equipment') || n.includes('furniture') || n.includes('vehicle')
       || n.includes('building') || n.includes('land') || n.includes('property')) return 'fixed-asset'
@@ -25,7 +21,6 @@ function coaTypeToSection(account) {
   return null
 }
 
-// Normal side: assets & expenses are debit-normal; liabilities, equity, revenue are credit-normal.
 function normalBalance(type) {
   return (type === 'asset' || type === 'expense') ? 1 : -1
 }
@@ -44,6 +39,58 @@ function buildLedger(vouchers) {
   return map
 }
 
+function buildSections(ledger, accounts, vouchers) {
+  const currentAssets = [], fixedAssets = [], currentLiabilities = [], equity = [], revenue = [], expenses = []
+
+  accounts.forEach(account => {
+    const section = coaTypeToSection(account)
+    if (!section) return
+    const key = account.name.trim().toLowerCase()
+    const t = ledger[key] || { debit: 0, credit: 0 }
+    if (t.debit === 0 && t.credit === 0) return
+    const amount = (t.debit - t.credit) * normalBalance(account.type)
+    const row = { name: account.name, amount }
+    if (section === 'current-asset') currentAssets.push(row)
+    else if (section === 'fixed-asset') fixedAssets.push(row)
+    else if (section === 'current-liability') currentLiabilities.push(row)
+    else if (section === 'equity') equity.push(row)
+    else if (section === 'revenue') revenue.push(row)
+    else if (section === 'expense') expenses.push(row)
+  })
+
+  // Orphan accounts
+  const accountedFor = new Set(accounts.map(a => a.name.trim().toLowerCase()))
+  Object.keys(ledger).forEach(key => {
+    if (accountedFor.has(key)) return
+    const originalName = (() => {
+      for (const v of vouchers) {
+        for (const e of (v.entries || [])) {
+          if (e.account && e.account.trim().toLowerCase() === key) return e.account.trim()
+        }
+      }
+      return key
+    })()
+    const t = ledger[key]
+    const n = key
+    if (n.includes('cash') || n.includes('bank') || n.includes('receivable') || n.includes('prepaid') || n.includes('inventory'))
+      currentAssets.push({ name: originalName + ' ⚠', amount: t.debit - t.credit })
+    else if (n.includes('equipment') || n.includes('furniture') || n.includes('vehicle') || n.includes('building'))
+      fixedAssets.push({ name: originalName + ' ⚠', amount: t.debit - t.credit })
+    else if (n.includes('payable') || n.includes('unearned') || n.includes('tax'))
+      currentLiabilities.push({ name: originalName + ' ⚠', amount: t.credit - t.debit })
+    else if (n.includes('capital') || n.includes('retained') || n.includes('equity'))
+      equity.push({ name: originalName + ' ⚠', amount: t.credit - t.debit })
+    else if (n.includes('revenue') || n.includes('sales') || n.includes('income'))
+      revenue.push({ name: originalName + ' ⚠', amount: t.credit - t.debit })
+    else if (n.includes('expense') || n.includes('cost') || n.includes('salaries') || n.includes('rent') || n.includes('utilities') || n.includes('supplies'))
+      expenses.push({ name: originalName + ' ⚠', amount: t.debit - t.credit })
+    else
+      currentAssets.push({ name: originalName + ' ⚠ (unclassified)', amount: t.debit - t.credit })
+  })
+
+  return { currentAssets, fixedAssets, currentLiabilities, equity, revenue, expenses }
+}
+
 function Section({ title, rows, total, color }) {
   return (
     <div style={{ marginBottom: 12 }}>
@@ -54,8 +101,7 @@ function Section({ title, rows, total, color }) {
       {rows.map(r => (
         <div key={r.name} style={{
           display: 'flex', justifyContent: 'space-between',
-          padding: '5px 0', borderBottom: '1px solid var(--border)',
-          fontSize: 13,
+          padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 13,
         }}>
           <span style={{ color: 'var(--text-2)' }}>{r.name}</span>
           <span style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>{fmt(r.amount)}</span>
@@ -73,105 +119,86 @@ function Section({ title, rows, total, color }) {
   )
 }
 
+function DateLabel({ label, value }) {
+  return (
+    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+      {label}: <span style={{ color: 'var(--text-2)', fontWeight: 600 }}>{value}</span>
+    </div>
+  )
+}
+
 export default function FinancialCondition() {
   const { vouchers, bills, accounts, settings } = useStore()
   const cur = settings.currency
 
-  // Build ledger totals keyed by lowercase account name
-  const ledger = buildLedger(vouchers)
+  // Balance Sheet: "as of" date — include all vouchers up to and including this date
+  const [asOf, setAsOf] = useState('')
+  // Income Statement: date range
+  const [incomeFrom, setIncomeFrom] = useState('')
+  const [incomeTo, setIncomeTo] = useState('')
 
-  // Build sections from the Chart of Accounts (respects user-defined types)
-  const currentAssets = []
-  const fixedAssets = []
-  const currentLiabilities = []
-  const equity = []
-  const revenue = []
-  const expenses = []
+  // Filter vouchers for Balance Sheet (all vouchers up to asOf date)
+  const bsVouchers = useMemo(() => {
+    if (!asOf) return vouchers
+    return vouchers.filter(v => !v.date || v.date <= asOf)
+  }, [vouchers, asOf])
 
-  accounts.forEach(account => {
-    const section = coaTypeToSection(account)
-    if (!section) return // skip accounts with unknown type
+  // Filter vouchers for Income Statement (only within date range)
+  const isVouchers = useMemo(() => {
+    return vouchers.filter(v => {
+      if (incomeFrom && v.date && v.date < incomeFrom) return false
+      if (incomeTo && v.date && v.date > incomeTo) return false
+      return true
+    })
+  }, [vouchers, incomeFrom, incomeTo])
 
-    const key = account.name.trim().toLowerCase()
-    const t = ledger[key] || { debit: 0, credit: 0 }
-    const nb = normalBalance(account.type)
-    const amount = (t.debit - t.credit) * nb
+  // Filter bills for Balance Sheet (up to asOf)
+  const bsBills = useMemo(() => {
+    if (!asOf) return bills
+    return bills.filter(b => !b.date || b.date <= asOf)
+  }, [bills, asOf])
 
-    // Only include accounts that have activity OR non-zero balance
-    // (still include zero-balance accounts that have been posted to)
-    const hasActivity = t.debit > 0 || t.credit > 0
+  // Filter bills for Income Statement (date range)
+  const isBills = useMemo(() => {
+    return bills.filter(b => {
+      if (incomeFrom && b.date && b.date < incomeFrom) return false
+      if (incomeTo && b.date && b.date > incomeTo) return false
+      return true
+    })
+  }, [bills, incomeFrom, incomeTo])
 
-    if (!hasActivity) return
+  // Build Balance Sheet ledger
+  const bsLedger = useMemo(() => buildLedger(bsVouchers), [bsVouchers])
+  const bsSections = useMemo(() => buildSections(bsLedger, accounts, bsVouchers), [bsLedger, accounts, bsVouchers])
 
-    const row = { name: account.name, amount }
+  // Build Income Statement ledger
+  const isLedger = useMemo(() => buildLedger(isVouchers), [isVouchers])
+  const isSections = useMemo(() => buildSections(isLedger, accounts, isVouchers), [isLedger, accounts, isVouchers])
 
-    if (section === 'current-asset') currentAssets.push(row)
-    else if (section === 'fixed-asset') fixedAssets.push(row)
-    else if (section === 'current-liability') currentLiabilities.push(row)
-    else if (section === 'equity') equity.push(row)
-    else if (section === 'revenue') revenue.push(row)
-    else if (section === 'expense') expenses.push(row)
-  })
+  // Balance Sheet figures
+  const { currentAssets, fixedAssets, currentLiabilities, equity } = bsSections
 
-  // Accounts used in vouchers but NOT in Chart of Accounts — classify by heuristic
-  // so nothing is silently lost (orphan accounts).
-  const accountedFor = new Set(accounts.map(a => a.name.trim().toLowerCase()))
-  Object.keys(ledger).forEach(key => {
-    if (accountedFor.has(key)) return
-    // Try to find the original casing from vouchers
-    const originalName = (() => {
-      for (const v of vouchers) {
-        for (const e of (v.entries || [])) {
-          if (e.account && e.account.trim().toLowerCase() === key) return e.account.trim()
-        }
-      }
-      return key
-    })()
-
-    const t = ledger[key]
-    const n = key
-    let amount, row
-
-    // Heuristic fallback for unregistered accounts
-    if (n.includes('cash') || n.includes('bank') || n.includes('receivable') || n.includes('prepaid') || n.includes('inventory')) {
-      currentAssets.push({ name: originalName + ' ⚠', amount: t.debit - t.credit })
-    } else if (n.includes('equipment') || n.includes('furniture') || n.includes('vehicle') || n.includes('building')) {
-      fixedAssets.push({ name: originalName + ' ⚠', amount: t.debit - t.credit })
-    } else if (n.includes('payable') || n.includes('unearned') || n.includes('tax')) {
-      currentLiabilities.push({ name: originalName + ' ⚠', amount: t.credit - t.debit })
-    } else if (n.includes('capital') || n.includes('retained') || n.includes('equity')) {
-      equity.push({ name: originalName + ' ⚠', amount: t.credit - t.debit })
-    } else if (n.includes('revenue') || n.includes('sales') || n.includes('income')) {
-      revenue.push({ name: originalName + ' ⚠', amount: t.credit - t.debit })
-    } else if (n.includes('expense') || n.includes('cost') || n.includes('salaries') || n.includes('rent') || n.includes('utilities') || n.includes('supplies')) {
-      expenses.push({ name: originalName + ' ⚠', amount: t.debit - t.credit })
-    } else {
-      // Truly unknown — add to current assets with warning so it's visible, not lost
-      currentAssets.push({ name: originalName + ' ⚠ (unclassified)', amount: t.debit - t.credit })
-    }
-  })
-
-  // Bills: add to current assets & revenue
-  const paidBillsTotal = bills.filter(b => b.status === 'paid')
-    .reduce((s, b) => s + parseFloat(b.total || 0), 0)
-  const unpaidBillsTotal = bills.filter(b => b.status !== 'paid')
-    .reduce((s, b) => s + parseFloat(b.total || 0), 0)
-
-  if (paidBillsTotal > 0) currentAssets.push({ name: 'Cash from Collections', amount: paidBillsTotal })
-  if (unpaidBillsTotal > 0) currentAssets.push({ name: 'Accounts Receivable (Invoices)', amount: unpaidBillsTotal })
-
-  const billRevenue = paidBillsTotal
-  if (billRevenue > 0) {
-    const existing = revenue.find(r => r.name === 'Service Revenue')
-    if (existing) existing.amount += billRevenue
-    else revenue.push({ name: 'Billing Revenue', amount: billRevenue })
-  }
+  const paidBillsBS = bsBills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  const unpaidBillsBS = bsBills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  if (paidBillsBS > 0) currentAssets.push({ name: 'Cash from Collections', amount: paidBillsBS })
+  if (unpaidBillsBS > 0) currentAssets.push({ name: 'Accounts Receivable (Invoices)', amount: unpaidBillsBS })
 
   const totalCurrentAssets = currentAssets.reduce((s, r) => s + r.amount, 0)
   const totalFixedAssets = fixedAssets.reduce((s, r) => s + r.amount, 0)
   const totalAssets = totalCurrentAssets + totalFixedAssets
   const totalLiabilities = currentLiabilities.reduce((s, r) => s + r.amount, 0)
   const totalEquity = equity.reduce((s, r) => s + r.amount, 0)
+
+  // Income Statement figures
+  const { revenue, expenses } = isSections
+
+  const paidBillsIS = isBills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  if (paidBillsIS > 0) {
+    const existing = revenue.find(r => r.name === 'Service Revenue')
+    if (existing) existing.amount += paidBillsIS
+    else revenue.push({ name: 'Billing Revenue', amount: paidBillsIS })
+  }
+
   const totalRevenue = revenue.reduce((s, r) => s + r.amount, 0)
   const totalExpenses = expenses.reduce((s, r) => s + r.amount, 0)
   const netIncome = totalRevenue - totalExpenses
@@ -181,6 +208,13 @@ export default function FinancialCondition() {
   const hasOrphans = [...currentAssets, ...fixedAssets, ...currentLiabilities, ...equity, ...revenue, ...expenses]
     .some(r => r.name.includes('⚠'))
 
+  const hasDateFilters = asOf || incomeFrom || incomeTo
+
+  function clearDates() { setAsOf(''); setIncomeFrom(''); setIncomeTo('') }
+
+  const labelStyle = { fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap' }
+  const inputStyle = { fontSize: 12, padding: '5px 8px', width: 140 }
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -188,6 +222,56 @@ export default function FinancialCondition() {
           <div className="page-h1">Financial Condition & Operations</div>
           <div className="page-sub">Balance Sheet · Income Statement</div>
         </div>
+      </div>
+
+      {/* Date filter toolbar */}
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center',
+        marginBottom: 16, padding: '12px 16px',
+        background: 'var(--surface2)', borderRadius: 'var(--radius-sm)',
+        border: '1px solid var(--border)',
+      }}>
+        {/* Balance Sheet as-of */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ ...labelStyle, fontWeight: 600, color: 'var(--text-2)' }}>Balance Sheet</span>
+          <span style={labelStyle}>as of</span>
+          <input
+            className="form-input"
+            type="date"
+            value={asOf}
+            onChange={e => setAsOf(e.target.value)}
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ width: 1, height: 24, background: 'var(--border)' }} />
+
+        {/* Income Statement date range */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ ...labelStyle, fontWeight: 600, color: 'var(--text-2)' }}>Income Statement</span>
+          <span style={labelStyle}>from</span>
+          <input
+            className="form-input"
+            type="date"
+            value={incomeFrom}
+            onChange={e => setIncomeFrom(e.target.value)}
+            style={inputStyle}
+          />
+          <span style={labelStyle}>to</span>
+          <input
+            className="form-input"
+            type="date"
+            value={incomeTo}
+            onChange={e => setIncomeTo(e.target.value)}
+            style={inputStyle}
+          />
+        </div>
+
+        {hasDateFilters && (
+          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '5px 10px' }} onClick={clearDates}>
+            <X size={13} /> Clear dates
+          </button>
+        )}
       </div>
 
       {!hasData ? (
@@ -203,7 +287,7 @@ export default function FinancialCondition() {
           {hasOrphans && (
             <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid var(--amber, #f59e0b)', padding: '10px 16px' }}>
               <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
-                <strong>⚠ Some accounts</strong> are used in vouchers but not found in your Chart of Accounts — they are marked with ⚠ and classified by keyword. Add them to your Chart of Accounts and assign their type to remove this warning and ensure correct categorisation.
+                <strong>⚠ Some accounts</strong> are used in vouchers but not found in your Chart of Accounts — they are marked with ⚠ and classified by keyword. Add them to your Chart of Accounts and assign their type to remove this warning.
               </div>
             </div>
           )}
@@ -215,6 +299,10 @@ export default function FinancialCondition() {
                 <div>
                   <div className="card-title">Balance Sheet</div>
                   <div className="card-sub">Statement of Financial Position</div>
+                  {asOf
+                    ? <DateLabel label="As of" value={asOf} />
+                    : <DateLabel label="As of" value="all dates" />
+                  }
                 </div>
               </div>
               <Section title="Current Assets" rows={currentAssets} total={totalCurrentAssets} color="var(--green)" />
@@ -223,8 +311,7 @@ export default function FinancialCondition() {
               )}
               <div style={{
                 display: 'flex', justifyContent: 'space-between', padding: '10px 0',
-                fontSize: 14, fontWeight: 800, borderTop: '2px solid var(--border2)',
-                marginBottom: 20,
+                fontSize: 14, fontWeight: 800, borderTop: '2px solid var(--border2)', marginBottom: 20,
               }}>
                 <span>Total Assets</span>
                 <span style={{ fontFamily: 'var(--mono)', color: 'var(--green)' }}>{fmt(totalAssets, cur)}</span>
@@ -257,10 +344,9 @@ export default function FinancialCondition() {
                   {fmt(totalLE, cur)}
                 </span>
               </div>
-
               {Math.abs(totalAssets - totalLE) >= 0.01 && (
                 <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 6, textAlign: 'right' }}>
-                  ⚠ Balance sheet out of balance by {fmt(Math.abs(totalAssets - totalLE), cur)}
+                  ⚠ Out of balance by {fmt(Math.abs(totalAssets - totalLE), cur)}
                 </div>
               )}
             </div>
@@ -272,6 +358,10 @@ export default function FinancialCondition() {
                   <div>
                     <div className="card-title">Income Statement</div>
                     <div className="card-sub">Statement of Operations</div>
+                    {(incomeFrom || incomeTo)
+                      ? <DateLabel label="Period" value={`${incomeFrom || '…'} → ${incomeTo || '…'}`} />
+                      : <DateLabel label="Period" value="all dates" />
+                    }
                   </div>
                 </div>
                 <Section title="Revenue" rows={revenue} total={totalRevenue} color="var(--green)" />
