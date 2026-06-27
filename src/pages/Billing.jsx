@@ -303,6 +303,18 @@ function BillModal({ bill, onClose, onSave, clients, bills, accounts, taxRate })
           <div className="form-group">
             <label className="form-label">Due Date</label>
             <input className="form-input" type="date" value={form.dueDate} onChange={e => setF('dueDate', e.target.value)} />
+            <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+              {[7, 14, 30, 60].map(d => (
+                <button key={d} type="button" className="btn btn-ghost" style={{ fontSize: 10, padding: '2px 7px' }}
+                  onClick={() => {
+                    const base = form.date ? new Date(form.date + 'T00:00:00') : new Date()
+                    base.setDate(base.getDate() + d)
+                    setF('dueDate', base.toISOString().slice(0, 10))
+                  }}>
+                  +{d}d
+                </button>
+              ))}
+            </div>
           </div>
           <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 20 }}>
             <input type="checkbox" id="applyTax" checked={form.applyTax}

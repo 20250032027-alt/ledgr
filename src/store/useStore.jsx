@@ -15,6 +15,24 @@ const defaultSettings = {
 function toSnakeKey(k) { return k.replace(/[A-Z]/g, m => '_' + m.toLowerCase()) }
 function toCamelKey(k) { return k.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase()) }
 
+// Known columns for each table — prevents sending unrecognised fields to Supabase
+// (add new columns here AND in a migration when extending the schema)
+const BILL_COLS = new Set([
+  'number','client_id','client_name','date','due_date','lines','notes',
+  'apply_tax','subtotal','tax','total','status',
+  'receivable_account','revenue_account','cash_account','paid_date',
+])
+
+function toBillDb(obj) {
+  const out = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === 'id' || k === 'user_id' || k === 'createdAt') continue
+    const snake = toSnakeKey(k)
+    if (BILL_COLS.has(snake)) out[snake] = v === '' ? null : v
+  }
+  return out
+}
+
 function toDb(obj) {
   const out = {}
   for (const [k, v] of Object.entries(obj)) {
@@ -172,7 +190,7 @@ export function StoreProvider({ children, userId }) {
   async function addBill(bill) {
     const num = `INV-${String(bills.length + 1).padStart(4, '0')}`
     const { data, error: e } = await supabase
-      .from('bills').insert(toDb({ ...bill, number: num, status: 'unpaid' })).select().single()
+      .from('bills').insert(toBillDb({ ...bill, number: num, status: 'unpaid' })).select().single()
     if (e) { fail(e, 'Could not create invoice'); return null }
     const rec = fromDb(data)
     setBills(b => [...b, rec])
@@ -201,7 +219,7 @@ export function StoreProvider({ children, userId }) {
 
   async function updateBill(id, patch) {
     const existing = bills.find(b => b.id === id)
-    const { data, error: e } = await supabase.from('bills').update(toDb(patch)).eq('id', id).select().single()
+    const { data, error: e } = await supabase.from('bills').update(toBillDb(patch)).eq('id', id).select().single()
     if (e) { fail(e, 'Could not update invoice'); return }
     const updated = fromDb(data)
     setBills(b => b.map(x => x.id === id ? updated : x))

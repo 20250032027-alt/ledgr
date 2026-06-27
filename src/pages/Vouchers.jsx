@@ -77,10 +77,18 @@ async function exportVouchersToExcel(vouchers, clients) {
   XLSX.writeFile(wb, `ledgr-vouchers-${dateStr}.xlsx`)
 }
 
-function EntryRow({ entry, onChange, onRemove, accounts }) {
+function EntryRow({ entry, onChange, onRemove, onAddBelow, accounts, isLast }) {
   const accountNames = new Set(accounts.map(a => a.name.trim().toLowerCase()))
   const val = (entry.account || '').trim()
   const isInvalid = val.length > 0 && !accountNames.has(val.toLowerCase())
+
+  // Tab on last credit field → add new row
+  function handleCreditKeyDown(e) {
+    if (e.key === 'Tab' && !e.shiftKey && isLast) {
+      e.preventDefault()
+      onAddBelow()
+    }
+  }
 
   return (
     <tr>
@@ -127,6 +135,7 @@ function EntryRow({ entry, onChange, onRemove, accounts }) {
           style={{ fontSize: 12, padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--mono)' }}
           type="number" min="0" step="0.01" value={entry.credit}
           onChange={e => onChange({ ...entry, credit: e.target.value, debit: e.target.value ? '' : entry.debit })}
+          onKeyDown={handleCreditKeyDown}
           placeholder="0.00"
         />
       </td>
@@ -139,7 +148,7 @@ function EntryRow({ entry, onChange, onRemove, accounts }) {
   )
 }
 
-function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, onSaveTemplate, onDeleteTemplate }) {
+function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, onSaveTemplate, onDeleteTemplate, recentMemos }) {
   const blankEntry = () => ({ account: '', description: '', debit: '', credit: '', id: crypto.randomUUID() })
   const [form, setForm] = useState(voucher || {
     type: 'general', date: new Date().toISOString().slice(0, 10),
@@ -192,7 +201,7 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
 
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 720 }}>
+      <div className="modal" style={{ maxWidth: 720 }} onKeyDown={e => e.key === 'Escape' && onClose()}>
         <div className="modal-header">
           <span className="modal-title">{voucher ? 'Edit Voucher' : 'New Voucher'}</span>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
@@ -222,7 +231,13 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
           </div>
           <div className="form-group form-col-full">
             <label className="form-label">Memo</label>
-            <input className="form-input" value={form.memo} onChange={e => setF('memo', e.target.value)} placeholder="Brief description of this entry" />
+            <input autoFocus className="form-input" value={form.memo}
+              onChange={e => setF('memo', e.target.value)}
+              list="memo-suggestions"
+              placeholder="Brief description of this entry" />
+            <datalist id="memo-suggestions">
+              {recentMemos.map((m, i) => <option key={i} value={m} />)}
+            </datalist>
           </div>
         </div>
 
@@ -366,6 +381,8 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
                 <EntryRow key={e.id} entry={e}
                   onChange={upd => setEntry(i, upd)}
                   onRemove={() => removeEntry(i)}
+                  onAddBelow={addEntry}
+                  isLast={i === form.entries.length - 1}
                   accounts={accounts}
                 />
               ))}
@@ -416,6 +433,19 @@ export default function Vouchers() {
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [exporting, setExporting] = useState(false)
+  const [copied, setCopied] = useState(null)
+
+  // Last 20 unique non-empty memos for autocomplete
+  const recentMemos = [...new Set(
+    [...vouchers].reverse().map(v => v.memo).filter(Boolean)
+  )].slice(0, 20)
+
+  function copyNumber(num) {
+    navigator.clipboard.writeText(num).then(() => {
+      setCopied(num)
+      setTimeout(() => setCopied(null), 1500)
+    })
+  }
 
   const filtered = vouchers.filter(v => {
     const q = search.toLowerCase()
@@ -502,7 +532,15 @@ export default function Vouchers() {
                 const creditLabel = creditAccounts.length > 0 ? creditAccounts.join(', ') : '—'
                 return (
                   <tr key={v.id}>
-                    <td className="td-mono" style={{ fontWeight: 600 }}>{v.number}</td>
+                    <td className="td-mono" style={{ fontWeight: 600 }}>
+                      <span
+                        title="Click to copy"
+                        onClick={() => copyNumber(v.number)}
+                        style={{ cursor: 'pointer', borderBottom: '1px dashed var(--border2)' }}
+                      >
+                        {copied === v.number ? '✓ copied' : v.number}
+                      </span>
+                    </td>
                     <td>
                       <span className="badge badge-blue">{v.type}</span>
                     </td>
@@ -544,6 +582,7 @@ export default function Vouchers() {
           clients={clients}
           accounts={accounts}
           templates={templates}
+          recentMemos={recentMemos}
           onSaveTemplate={addTemplate}
           onDeleteTemplate={deleteTemplate}
           onClose={() => setModal(null)}

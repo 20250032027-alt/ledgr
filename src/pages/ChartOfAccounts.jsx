@@ -37,9 +37,24 @@ function normalSide(type) { return type === 'asset' || type === 'expense' ? 1 : 
 function AccountModal({ account, onClose, onSave }) {
   const [form, setForm] = useState(account || { code: '', name: '', type: 'asset', description: '' })
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+
+  // Auto-suggest type from account code prefix
+  function handleCodeChange(code) {
+    set('code', code)
+    if (account) return // don't override type when editing
+    const n = parseInt(code, 10)
+    if (n >= 1000 && n < 2000) set('type', 'asset')
+    else if (n >= 2000 && n < 3000) set('type', 'liability')
+    else if (n >= 3000 && n < 4000) set('type', 'equity')
+    else if (n >= 4000 && n < 5000) set('type', 'revenue')
+    else if (n >= 5000) set('type', 'expense')
+  }
+
+  function submit() { if (form.name) onSave(form) }
+
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
+      <div className="modal" onKeyDown={e => e.key === 'Escape' && onClose()}>
         <div className="modal-header">
           <span className="modal-title">{account ? 'Edit Account' : 'New Account'}</span>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
@@ -47,7 +62,13 @@ function AccountModal({ account, onClose, onSave }) {
         <div className="form-grid">
           <div className="form-group">
             <label className="form-label">Code</label>
-            <input className="form-input" value={form.code || ''} onChange={e => set('code', e.target.value)} placeholder="1000" />
+            <input autoFocus className="form-input" value={form.code || ''}
+              onChange={e => handleCodeChange(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              placeholder="1000" />
+            <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 3 }}>
+              1xxx Asset · 2xxx Liability · 3xxx Equity · 4xxx Revenue · 5xxx Expense
+            </div>
           </div>
           <div className="form-group">
             <label className="form-label">Type</label>
@@ -57,16 +78,21 @@ function AccountModal({ account, onClose, onSave }) {
           </div>
           <div className="form-group form-col-full">
             <label className="form-label">Account Name *</label>
-            <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Cash" />
+            <input className="form-input" value={form.name}
+              onChange={e => set('name', e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              placeholder="Cash" />
           </div>
           <div className="form-group form-col-full">
             <label className="form-label">Description</label>
-            <textarea className="form-textarea" value={form.description || ''} onChange={e => set('description', e.target.value)} placeholder="What this account is used for..." />
+            <textarea className="form-textarea" value={form.description || ''}
+              onChange={e => set('description', e.target.value)}
+              placeholder="What this account is used for..." />
           </div>
         </div>
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={!form.name} onClick={() => onSave(form)}>
+          <button className="btn btn-primary" disabled={!form.name} onClick={submit}>
             {account ? 'Save Changes' : 'Add Account'}
           </button>
         </div>

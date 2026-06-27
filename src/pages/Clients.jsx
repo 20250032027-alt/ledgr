@@ -8,10 +8,11 @@ function ClientModal({ client, onClose, onSave }) {
     name: '', company: '', email: '', phone: '', address: '', type: 'individual', notes: '',
   })
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+  function submit() { if (form.name) onSave(form) }
 
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
+      <div className="modal" onKeyDown={e => e.key === 'Escape' && onClose()}>
         <div className="modal-header">
           <span className="modal-title">{client ? 'Edit Client' : 'New Client'}</span>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
@@ -19,19 +20,31 @@ function ClientModal({ client, onClose, onSave }) {
         <div className="form-grid">
           <div className="form-group">
             <label className="form-label">Full Name *</label>
-            <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Juan dela Cruz" />
+            <input autoFocus className="form-input" value={form.name}
+              onChange={e => set('name', e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              placeholder="Juan dela Cruz" />
           </div>
           <div className="form-group">
             <label className="form-label">Company</label>
-            <input className="form-input" value={form.company} onChange={e => set('company', e.target.value)} placeholder="Acme Corp" />
+            <input className="form-input" value={form.company}
+              onChange={e => set('company', e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              placeholder="Acme Corp" />
           </div>
           <div className="form-group">
             <label className="form-label">Email</label>
-            <input className="form-input" type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="juan@email.com" />
+            <input className="form-input" type="email" value={form.email}
+              onChange={e => set('email', e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              placeholder="juan@email.com" />
           </div>
           <div className="form-group">
             <label className="form-label">Phone</label>
-            <input className="form-input" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+63 912 345 6789" />
+            <input className="form-input" value={form.phone}
+              onChange={e => set('phone', e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              placeholder="+63 912 345 6789" />
           </div>
           <div className="form-group">
             <label className="form-label">Type</label>
@@ -43,16 +56,21 @@ function ClientModal({ client, onClose, onSave }) {
           </div>
           <div className="form-group">
             <label className="form-label">Address</label>
-            <input className="form-input" value={form.address} onChange={e => set('address', e.target.value)} placeholder="123 Rizal St, Davao City" />
+            <input className="form-input" value={form.address}
+              onChange={e => set('address', e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              placeholder="123 Rizal St, Davao City" />
           </div>
           <div className="form-group form-col-full">
             <label className="form-label">Notes</label>
-            <textarea className="form-textarea" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Additional notes..." />
+            <textarea className="form-textarea" value={form.notes}
+              onChange={e => set('notes', e.target.value)}
+              placeholder="Additional notes..." />
           </div>
         </div>
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={() => form.name && onSave(form)}>
+          <button className="btn btn-primary" onClick={submit}>
             {client ? 'Save Changes' : 'Add Client'}
           </button>
         </div>
