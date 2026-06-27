@@ -50,7 +50,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 }
 
 export default function Dashboard() {
-  const { clients, vouchers, bills, accounts, settings, refresh, loading } = useStore()
+  const { clients, vouchers, bills, settings, refresh, loading } = useStore()
   const cur = settings.currency
 
   // Refresh data when dashboard comes into focus (mobile-friendly)
@@ -60,26 +60,33 @@ export default function Dashboard() {
     return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
-  // Revenue = all bills (accrual — same as FinancialCondition)
+  // ── Helpers (same logic as CashFlow.jsx) ────────────────────
+  function isCashAccount(name = '') {
+    const a = name.toLowerCase()
+    return a.includes('cash') || a.includes('bank')
+  }
+  function cashDelta(entries = []) {
+    return entries
+      .filter(e => isCashAccount(e.account))
+      .reduce((s, e) => s + parseFloat(e.debit || 0) - parseFloat(e.credit || 0), 0)
+  }
+
+  // ── Revenue: all bills (accrual) ────────────────────────────
   const totalRevenue = bills.reduce((s, b) => s + parseFloat(b.total || 0), 0)
-  const totalUnpaid = bills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
   const totalPaid = bills.filter(b => b.status === 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  const totalUnpaid = bills.filter(b => b.status !== 'paid').reduce((s, b) => s + parseFloat(b.total || 0), 0)
 
-  // Expenses = sum of all expense-type account entries from vouchers
-  // (uses Chart of Accounts type, same logic as FinancialCondition)
-  const expenseAccountNames = new Set(
-    accounts.filter(a => a.type === 'expense').map(a => a.name.trim().toLowerCase())
-  )
-  const totalExpenses = vouchers.reduce((s, v) => {
-    return s + (v.entries || []).reduce((a, e) => {
-      const isExpense = expenseAccountNames.has((e.account || '').trim().toLowerCase())
-      return a + (isExpense ? parseFloat(e.debit || 0) : 0)
-    }, 0)
-  }, 0)
+  // ── Expenses: credit-side of cash/bank movements (cash out) ─
+  // Same as CashFlow: a voucher moves money out when its cash/bank entries
+  // are net credit (cash decreases). This matches what CashFlow shows.
+  const cashOutVouchers = vouchers.filter(v => cashDelta(v.entries) < 0)
+  const totalExpenses = cashOutVouchers
+    .reduce((s, v) => s + Math.abs(cashDelta(v.entries)), 0)
 
-  const netPosition = totalRevenue - totalExpenses
+  // ── Net position ─────────────────────────────────────────────
+  const netPosition = totalPaid - totalExpenses
 
-  // Build last 6 months chart data using voucher date field
+  // ── Chart: last 6 months using voucher date field ────────────
   const months = []
   for (let i = 5; i >= 0; i--) {
     const d = new Date()
@@ -91,17 +98,16 @@ export default function Dashboard() {
     const monthPrefix = `${yr}-${mo}`
 
     const rev = bills.filter(b => {
-      const dateStr = b.date || (b.createdAt ? b.createdAt.slice(0, 7) : '')
-      return dateStr.startsWith(monthPrefix)
+      const ds = b.date || (b.createdAt ? b.createdAt.slice(0, 7) : '')
+      return ds.startsWith(monthPrefix) && b.status === 'paid'
     }).reduce((s, b) => s + parseFloat(b.total || 0), 0)
 
-    const exp = vouchers.reduce((s, v) => {
-      const dateStr = v.date || (v.createdAt ? v.createdAt.slice(0, 7) : '')
-      if (!dateStr.startsWith(monthPrefix)) return s
-      return s + (v.entries || []).reduce((a, e) => {
-        const isExpense = expenseAccountNames.has((e.account || '').trim().toLowerCase())
-        return a + (isExpense ? parseFloat(e.debit || 0) : 0)
-      }, 0)
+    const exp = vouchers.filter(v => {
+      const ds = v.date || (v.createdAt ? v.createdAt.slice(0, 7) : '')
+      return ds.startsWith(monthPrefix)
+    }).reduce((s, v) => {
+      const delta = cashDelta(v.entries)
+      return delta < 0 ? s + Math.abs(delta) : s
     }, 0)
 
     months.push({ label, revenue: rev, expenses: exp })
@@ -129,8 +135,8 @@ export default function Dashboard() {
 
       <div className="stat-grid">
         <StatCard label="Total Clients" value={clients.length} icon={Users} />
-        <StatCard label="Total Revenue" value={fmt(totalRevenue, cur)} icon={TrendingUp} changeDir="up" />
-        <StatCard label="Total Expenses" value={fmt(totalExpenses, cur)} icon={TrendingDown} changeDir="down" />
+        <StatCard label="Billed Revenue" value={fmt(totalRevenue, cur)} icon={TrendingUp} changeDir="up" />
+        <StatCard label="Cash Out" value={fmt(totalExpenses, cur)} icon={TrendingDown} changeDir="down" />
         <StatCard label="Outstanding" value={fmt(totalUnpaid, cur)} icon={Receipt} />
       </div>
 
