@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
-import { supabase } from './lib/supabase'
+import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { StoreProvider, useStore } from './store/useStore.jsx'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -144,14 +144,44 @@ function AppShell({ userEmail }) {
   )
 }
 
+function ConfigMissing() {
+  return (
+    <div style={{
+      minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'var(--bg)', padding: 20,
+    }}>
+      <div className="card" style={{ maxWidth: 480 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+          <AlertCircle size={20} color="var(--red)" />
+          <span className="modal-title">Supabase isn't configured</span>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>
+          This app needs <code className="text-mono">VITE_SUPABASE_URL</code> and{' '}
+          <code className="text-mono">VITE_SUPABASE_ANON_KEY</code> to start.
+          <br /><br />
+          If you're running locally: copy <code className="text-mono">.env.example</code> to{' '}
+          <code className="text-mono">.env</code> and fill them in.
+          <br /><br />
+          If this is deployed on Vercel: add both in Project Settings →
+          Environment Variables, then redeploy — env vars only take effect on
+          the next build, not automatically.
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [session, setSession] = useState(undefined) // undefined = checking, null = signed out
 
   useEffect(() => {
+    if (!isSupabaseConfigured) return
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
     const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s))
     return () => listener.subscription.unsubscribe()
   }, [])
+
+  if (!isSupabaseConfigured) return <ConfigMissing />
 
   if (session === undefined) {
     return (
