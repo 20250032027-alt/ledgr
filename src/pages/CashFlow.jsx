@@ -17,29 +17,54 @@ const CustomTooltip = ({ active, payload, label }) => {
   )
 }
 
+// A voucher only belongs in a cash flow statement if it actually moves money
+// in or out of a cash/bank account — its free-text "type" label (general,
+// adjustment, etc.) isn't a reliable signal of that on its own.
+function isCashAccount(name = '') {
+  const a = name.toLowerCase()
+  return a.includes('cash') || a.includes('bank')
+}
+
+// Net change to cash/bank accounts caused by this voucher. Positive = cash in.
+function cashDelta(entries = []) {
+  return entries
+    .filter(e => isCashAccount(e.account))
+    .reduce((s, e) => s + parseFloat(e.debit || 0) - parseFloat(e.credit || 0), 0)
+}
+
+// Classify by what's on the *other* side of the cash movement — the same
+// way a real cash flow statement is built from the chart of accounts.
+function classify(entries = []) {
+  const others = entries.filter(e => !isCashAccount(e.account)).map(e => (e.account || '').toLowerCase())
+  if (others.some(n => n.includes('equipment') || n.includes('property') || n.includes('investment'))) return 'investing'
+  if (others.some(n => n.includes('capital') || n.includes('loan') || n.includes('notes payable') || n.includes('owner'))) return 'financing'
+  return 'operating'
+}
+
 export default function CashFlow() {
   const { vouchers, bills, settings } = useStore()
   const cur = settings.currency
 
-  // Operating: bills paid = inflow, expense vouchers = outflow
-  const operatingIn = bills.filter(b => b.status === 'paid')
+  const cashVouchers = vouchers
+    .map(v => ({ ...v, delta: cashDelta(v.entries), bucket: classify(v.entries) }))
+    .filter(v => Math.abs(v.delta) > 0.005)
+
+  const paidBillsTotal = bills.filter(b => b.status === 'paid')
     .reduce((s, b) => s + parseFloat(b.total || 0), 0)
-  const operatingOut = vouchers.filter(v => v.type === 'expense' || v.type === 'cash disbursement')
-    .reduce((s, v) => s + (v.entries || []).reduce((a, e) => a + parseFloat(e.debit || 0), 0), 0)
 
-  // Investing: vouchers with equipment accounts
-  const investingOut = vouchers
-    .filter(v => (v.entries || []).some(e => e.account?.toLowerCase().includes('equipment')))
-    .reduce((s, v) => s + (v.entries || []).filter(e => e.account?.toLowerCase().includes('equipment'))
-      .reduce((a, e) => a + parseFloat(e.debit || 0), 0), 0)
+  const operating = cashVouchers.filter(v => v.bucket === 'operating')
+  const investing = cashVouchers.filter(v => v.bucket === 'investing')
+  const financing = cashVouchers.filter(v => v.bucket === 'financing')
 
-  // Financing: capital entries
-  const financingIn = vouchers
-    .filter(v => (v.entries || []).some(e => e.account?.toLowerCase().includes('capital')))
-    .reduce((s, v) => s + (v.entries || []).filter(e => e.account?.toLowerCase().includes('capital'))
-      .reduce((a, e) => a + parseFloat(e.credit || 0), 0), 0)
+  // Operating: cash-moving vouchers classified as operating, plus paid
+  // invoices (invoices don't generate a voucher in this version of the app,
+  // so this is the only record we have of that cash actually coming in).
+  const operatingIn = operating.filter(v => v.delta > 0).reduce((s, v) => s + v.delta, 0) + paidBillsTotal
+  const operatingOut = operating.filter(v => v.delta < 0).reduce((s, v) => s - v.delta, 0)
+  const investingNet = investing.reduce((s, v) => s + v.delta, 0)
+  const financingNet = financing.reduce((s, v) => s + v.delta, 0)
 
-  const netCash = (operatingIn - operatingOut) + (-investingOut) + financingIn
+  const netCash = operatingIn - operatingOut + investingNet + financingNet
 
   // Monthly data
   const months = []
@@ -48,15 +73,18 @@ export default function CashFlow() {
     d.setMonth(d.getMonth() - i)
     const label = d.toLocaleString('en', { month: 'short' })
     const yr = d.getFullYear(), mo = d.getMonth()
-    const inflow = bills.filter(b => {
+
+    const monthCash = cashVouchers.filter(v => {
+      const vd = new Date(v.createdAt)
+      return vd.getMonth() === mo && vd.getFullYear() === yr
+    })
+    const billsInMonth = bills.filter(b => {
       const bd = new Date(b.createdAt)
       return bd.getMonth() === mo && bd.getFullYear() === yr && b.status === 'paid'
     }).reduce((s, b) => s + parseFloat(b.total || 0), 0)
-    const outflow = vouchers.filter(v => {
-      const vd = new Date(v.createdAt)
-      return vd.getMonth() === mo && vd.getFullYear() === yr &&
-        (v.type === 'expense' || v.type === 'cash disbursement')
-    }).reduce((s, v) => s + (v.entries || []).reduce((a, e) => a + parseFloat(e.debit || 0), 0), 0)
+
+    const inflow = monthCash.filter(v => v.delta > 0).reduce((s, v) => s + v.delta, 0) + billsInMonth
+    const outflow = monthCash.filter(v => v.delta < 0).reduce((s, v) => s - v.delta, 0)
     months.push({ label, inflow, outflow, net: inflow - outflow })
   }
 
@@ -66,9 +94,9 @@ export default function CashFlow() {
       id: b.id, date: b.createdAt, label: `Invoice ${b.number}`,
       amount: parseFloat(b.total || 0), type: 'inflow',
     })),
-    ...vouchers.filter(v => v.type === 'expense' || v.type === 'cash disbursement').map(v => ({
-      id: v.id, date: v.createdAt, label: `${v.number} — ${v.memo || v.type}`,
-      amount: (v.entries || []).reduce((a, e) => a + parseFloat(e.debit || 0), 0), type: 'outflow',
+    ...cashVouchers.map(v => ({
+      id: v.id, date: v.date || v.createdAt, label: `${v.number} — ${v.memo || v.type}`,
+      amount: Math.abs(v.delta), type: v.delta > 0 ? 'inflow' : 'outflow',
     })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10)
 
@@ -85,8 +113,16 @@ export default function CashFlow() {
         {[
           { label: 'Operating Inflows', val: operatingIn, color: 'var(--green)', icon: ArrowUpRight },
           { label: 'Operating Outflows', val: operatingOut, color: 'var(--red)', icon: ArrowDownRight },
-          { label: 'Investing Activities', val: -investingOut, color: 'var(--amber)', icon: ArrowDownRight },
-          { label: 'Financing Activities', val: financingIn, color: 'var(--accent)', icon: ArrowUpRight },
+          {
+            label: 'Investing Activities', val: investingNet,
+            color: investingNet >= 0 ? 'var(--green)' : 'var(--amber)',
+            icon: investingNet >= 0 ? ArrowUpRight : ArrowDownRight,
+          },
+          {
+            label: 'Financing Activities', val: financingNet,
+            color: financingNet >= 0 ? 'var(--accent)' : 'var(--red)',
+            icon: financingNet >= 0 ? ArrowUpRight : ArrowDownRight,
+          },
         ].map(s => (
           <div key={s.label} className="stat-card">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
