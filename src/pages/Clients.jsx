@@ -77,6 +77,15 @@ export default function Clients() {
       .reduce((s, b) => s + parseFloat(b.total || 0), 0)
   }
 
+  function getClientOutstanding(id) {
+    return bills.filter(b => b.clientId === id && b.status !== 'paid')
+      .reduce((s, b) => s + parseFloat(b.total || 0), 0)
+  }
+
+  function getClientUnpaidInvoices(id) {
+    return bills.filter(b => b.clientId === id && b.status !== 'paid')
+  }
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -115,7 +124,8 @@ export default function Clients() {
                 <th>Client</th>
                 <th>Contact</th>
                 <th>Type</th>
-                <th>Total Paid</th>
+                <th style={{ textAlign: 'right' }}>Outstanding</th>
+                <th style={{ textAlign: 'right' }}>Total Paid</th>
                 <th>Since</th>
                 <th></th>
               </tr>
@@ -158,7 +168,21 @@ export default function Clients() {
                       {c.type}
                     </span>
                   </td>
-                  <td className="td-mono">{fmt(getClientTotal(c.id), settings.currency)}</td>
+                  <td className="td-mono" style={{ textAlign: 'right' }}>
+                    {getClientOutstanding(c.id) > 0 ? (
+                      <div>
+                        <div style={{ color: 'var(--amber, #f59e0b)', fontWeight: 600 }}>
+                          {fmt(getClientOutstanding(c.id), settings.currency)}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                          {getClientUnpaidInvoices(c.id).length} unpaid
+                        </div>
+                      </div>
+                    ) : (
+                      <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>
+                    )}
+                  </td>
+                  <td className="td-mono" style={{ textAlign: 'right' }}>{fmt(getClientTotal(c.id), settings.currency)}</td>
                   <td className="td-mono">{fmtDate(c.createdAt)}</td>
                   <td>
                     <div className="row-actions">

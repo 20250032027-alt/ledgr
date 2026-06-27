@@ -58,7 +58,7 @@ export default function Dashboard() {
     function onFocus() { refresh() }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
-  }, [])
+  }, [refresh])
 
   // Revenue = all bills (accrual — same as FinancialCondition)
   const totalRevenue = bills.reduce((s, b) => s + parseFloat(b.total || 0), 0)

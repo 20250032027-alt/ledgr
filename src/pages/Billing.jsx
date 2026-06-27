@@ -32,7 +32,59 @@ function LineRow({ line, onChange, onRemove }) {
   )
 }
 
-function BillModal({ bill, onClose, onSave, clients, taxRate }) {
+function MarkPaidModal({ bill, onClose, onConfirm, cashAccounts }) {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [cashAccount, setCashAccount] = useState(cashAccounts[0]?.name || 'Cash')
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 420 }}>
+        <div className="modal-header">
+          <span className="modal-title">Mark as Paid — {bill.number}</span>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div style={{ padding: '4px 0 16px', fontSize: 13, color: 'var(--text-2)' }}>
+          This will post a journal entry:
+          <div style={{
+            margin: '10px 0', padding: '10px 12px',
+            background: 'var(--surface2)', borderRadius: 'var(--radius-sm)',
+            fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 1.7,
+          }}>
+            DR {cashAccount}<br />
+            &nbsp;&nbsp;CR Accounts Receivable<br />
+            <span style={{ color: 'var(--text-3)' }}>Amount: {fmt(bill.total)}</span>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Payment Date</label>
+          <input className="form-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Deposit To (Cash / Bank Account)</label>
+          <select className="form-select" value={cashAccount} onChange={e => setCashAccount(e.target.value)}>
+            {cashAccounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+            {cashAccounts.length === 0 && <option value="Cash">Cash</option>}
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+            Only asset accounts from your Chart of Accounts are shown.
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={() => onConfirm({ paidDate: date, cashAccount })}>
+            <CheckCircle size={14} /> Confirm Payment
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BillModal({ bill, onClose, onSave, clients, bills, taxRate }) {
   const blankLine = () => ({ id: crypto.randomUUID(), description: '', qty: 1, rate: '' })
   const [form, setForm] = useState(bill || {
     clientId: '', clientName: '',
@@ -54,6 +106,12 @@ function BillModal({ bill, onClose, onSave, clients, taxRate }) {
     setForm(f => ({ ...f, clientId: id, clientName: c?.name || '' }))
   }
 
+  // Outstanding invoices for the selected client
+  const clientOutstanding = form.clientId
+    ? bills.filter(b => b.clientId === form.clientId && b.status !== 'paid' && b.id !== bill?.id)
+    : []
+  const outstandingTotal = clientOutstanding.reduce((s, b) => s + parseFloat(b.total || 0), 0)
+
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{ maxWidth: 700 }}>
@@ -62,12 +120,19 @@ function BillModal({ bill, onClose, onSave, clients, taxRate }) {
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
 
-        <div className="form-grid" style={{ marginBottom: 16 }}>
+        <div className="form-grid" style={{ marginBottom: clientOutstanding.length > 0 ? 8 : 16 }}>
           <div className="form-group">
             <label className="form-label">Client *</label>
             <select className="form-select" value={form.clientId} onChange={e => setClient(e.target.value)}>
               <option value="">— Select Client —</option>
-              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {clients.map(c => {
+                const unpaid = bills.filter(b => b.clientId === c.id && b.status !== 'paid')
+                return (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{unpaid.length > 0 ? ` (${unpaid.length} unpaid)` : ''}
+                  </option>
+                )
+              })}
             </select>
           </div>
           <div className="form-group">
@@ -86,6 +151,44 @@ function BillModal({ bill, onClose, onSave, clients, taxRate }) {
             </label>
           </div>
         </div>
+
+        {/* Outstanding receivables for selected client */}
+        {clientOutstanding.length > 0 && (
+          <div style={{
+            marginBottom: 16, borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--amber, #f59e0b)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '8px 12px', fontSize: 12, fontWeight: 600,
+              background: 'rgba(245,158,11,0.1)', color: 'var(--amber, #f59e0b)',
+              display: 'flex', justifyContent: 'space-between',
+            }}>
+              <span>⚠ {form.clientName} has {clientOutstanding.length} unpaid invoice{clientOutstanding.length !== 1 ? 's' : ''}</span>
+              <span style={{ fontFamily: 'var(--mono)' }}>{fmt(outstandingTotal)} outstanding</span>
+            </div>
+            <div style={{ padding: '0 12px' }}>
+              {clientOutstanding.map(b => (
+                <div key={b.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '6px 0', borderBottom: '1px solid var(--border)',
+                  fontSize: 12,
+                }}>
+                  <div>
+                    <span style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{b.number}</span>
+                    {b.date && <span style={{ color: 'var(--text-3)', marginLeft: 8 }}>{b.date}</span>}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontFamily: 'var(--mono)' }}>{fmt(b.total)}</span>
+                    <span className={`badge ${b.status === 'overdue' ? 'badge-red' : 'badge-amber'}`}>
+                      {b.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={{ overflowX: 'auto', marginBottom: 12 }}>
           <table style={{ fontSize: 12 }}>
@@ -166,10 +269,14 @@ const STATUS_ICONS = {
 }
 
 export default function Billing() {
-  const { bills, addBill, updateBill, deleteBill, clients, settings } = useStore()
+  const { bills, addBill, updateBill, deleteBill, clients, accounts, settings } = useStore()
   const [modal, setModal] = useState(null)
+  const [payModal, setPayModal] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+
+  // Asset accounts suitable as cash/bank deposit accounts
+  const cashAccounts = accounts.filter(a => a.type === 'asset')
 
   const filtered = bills.filter(b => {
     const q = search.toLowerCase()
@@ -179,7 +286,6 @@ export default function Billing() {
     return matchSearch && matchStatus
   })
 
-  function markPaid(id) { updateBill(id, { status: 'paid' }) }
   function markOverdue(id) { updateBill(id, { status: 'overdue' }) }
 
   return (
@@ -252,7 +358,7 @@ export default function Billing() {
                   <td>
                     <div className="row-actions">
                       {b.status !== 'paid' && (
-                        <button className="btn btn-ghost btn-sm" onClick={() => markPaid(b.id)}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setPayModal(b)}>
                           <CheckCircle size={12} /> Paid
                         </button>
                       )}
@@ -276,12 +382,25 @@ export default function Billing() {
         <BillModal
           bill={modal === 'new' ? null : modal}
           clients={clients}
+          bills={bills}
           taxRate={settings.taxRate}
           onClose={() => setModal(null)}
           onSave={form => {
             if (modal === 'new') addBill(form)
             else updateBill(modal.id, form)
             setModal(null)
+          }}
+        />
+      )}
+
+      {payModal && (
+        <MarkPaidModal
+          bill={payModal}
+          cashAccounts={cashAccounts}
+          onClose={() => setPayModal(null)}
+          onConfirm={({ paidDate, cashAccount }) => {
+            updateBill(payModal.id, { status: 'paid', paidDate, cashAccount })
+            setPayModal(null)
           }}
         />
       )}

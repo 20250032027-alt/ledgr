@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext } from 'react'
+import { useState, useEffect, useRef, createContext, useContext } from 'react'
 import { supabase } from '../lib/supabase'
 import { DEFAULT_ACCOUNTS } from './defaultAccounts'
 
@@ -46,7 +46,7 @@ export function StoreProvider({ children, userId }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const refreshRef = useState(null)
+  const refreshRef = useRef(null)
 
   useEffect(() => {
     if (!userId) return
@@ -110,12 +110,12 @@ export function StoreProvider({ children, userId }) {
         setLoading(false)
       }
     }
-    refreshRef[0] = loadAll
+    refreshRef.current = loadAll
     loadAll()
     return () => { cancelled = true }
   }, [userId])
 
-  function refresh() { if (refreshRef[0]) refreshRef[0]() }
+  function refresh() { if (refreshRef.current) refreshRef.current() }
 
   function fail(e, fallbackMsg) {
     setError(e?.message || fallbackMsg)
@@ -162,6 +162,12 @@ export function StoreProvider({ children, userId }) {
   }
 
   // ---- Bills ----
+  // Helper: find a CoA account by name (case-insensitive), return its name or fallback
+  function coaName(preferred, fallback) {
+    const match = accounts.find(a => a.name.trim().toLowerCase() === preferred.toLowerCase())
+    return match ? match.name : (fallback || preferred)
+  }
+
   async function addBill(bill) {
     const num = `INV-${String(bills.length + 1).padStart(4, '0')}`
     const { data, error: e } = await supabase
@@ -169,12 +175,56 @@ export function StoreProvider({ children, userId }) {
     if (e) { fail(e, 'Could not create invoice'); return null }
     const rec = fromDb(data)
     setBills(b => [...b, rec])
+
+    // Auto-post: DR Accounts Receivable / CR Service Revenue
+    const arAccount = coaName('Accounts Receivable')
+    const revAccount = coaName('Service Revenue', 'Sales Revenue')
+    const vNum = `JE-INV-${num}`
+    await supabase.from('vouchers').insert(toDb({
+      number: vNum,
+      type: 'general',
+      date: bill.date || new Date().toISOString().slice(0, 10),
+      memo: `Invoice ${num} — ${bill.clientName || ''}`,
+      reference: num,
+      entries: [
+        { account: arAccount, description: `Receivable from ${bill.clientName || ''}`, debit: bill.total, credit: 0 },
+        { account: revAccount, description: `Revenue for ${num}`, debit: 0, credit: bill.total },
+      ],
+    }))
+    // Reload vouchers so the ledger reflects the new entry
+    const { data: vd } = await supabase.from('vouchers').select('*').order('created_at')
+    if (vd) setVouchers(vd.map(fromDb))
+
     return rec.id
   }
+
   async function updateBill(id, patch) {
+    const existing = bills.find(b => b.id === id)
     const { data, error: e } = await supabase.from('bills').update(toDb(patch)).eq('id', id).select().single()
     if (e) { fail(e, 'Could not update invoice'); return }
-    setBills(b => b.map(x => x.id === id ? fromDb(data) : x))
+    const updated = fromDb(data)
+    setBills(b => b.map(x => x.id === id ? updated : x))
+
+    // Auto-post collection entry when status changes to 'paid'
+    if (patch.status === 'paid' && existing?.status !== 'paid') {
+      const arAccount = coaName('Accounts Receivable')
+      const cashAccount = coaName(patch.cashAccount || 'Cash')
+      const inv = updated
+      const vNum = `JE-PAY-${inv.number}`
+      await supabase.from('vouchers').insert(toDb({
+        number: vNum,
+        type: 'general',
+        date: patch.paidDate || new Date().toISOString().slice(0, 10),
+        memo: `Collection for ${inv.number} — ${inv.clientName || ''}`,
+        reference: inv.number,
+        entries: [
+          { account: cashAccount, description: `Cash received from ${inv.clientName || ''}`, debit: inv.total, credit: 0 },
+          { account: arAccount, description: `Clear receivable for ${inv.number}`, debit: 0, credit: inv.total },
+        ],
+      }))
+      const { data: vd } = await supabase.from('vouchers').select('*').order('created_at')
+      if (vd) setVouchers(vd.map(fromDb))
+    }
   }
   async function deleteBill(id) {
     const { error: e } = await supabase.from('bills').delete().eq('id', id)
