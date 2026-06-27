@@ -4,6 +4,7 @@ import { DEFAULT_ACCOUNTS } from './defaultAccounts'
 
 const defaultSettings = {
   company: 'My Company',
+  address: '',
   currency: 'PHP',
   taxRate: 12,
 }
@@ -176,8 +177,8 @@ export function StoreProvider({ children, userId }) {
     const rec = fromDb(data)
     setBills(b => [...b, rec])
 
-    // Auto-post: DR Accounts Receivable / CR Service Revenue
-    const arAccount = coaName('Accounts Receivable')
+    // Auto-post: DR chosen Receivable Account / CR Service Revenue
+    const arAccount = bill.receivableAccount || coaName('Accounts Receivable')
     const revAccount = coaName('Service Revenue', 'Sales Revenue')
     const vNum = `JE-INV-${num}`
     await supabase.from('vouchers').insert(toDb({

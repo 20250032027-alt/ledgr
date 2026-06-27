@@ -34,6 +34,12 @@ export default function Settings({ userEmail }) {
             <label className="form-label">Company Name</label>
             <input className="form-input" value={form.company} onChange={e => setF('company', e.target.value)} />
           </div>
+          <div className="form-group form-col-full">
+            <label className="form-label">Address / Contact Info <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(shown on printed invoices)</span></label>
+            <textarea className="form-textarea" rows={3} value={form.address || ''}
+              onChange={e => setF('address', e.target.value)}
+              placeholder="123 Main St, Cagayan de Oro City&#10;Tel: 0912-345-6789 · info@yourfirm.com" />
+          </div>
           <div className="form-group">
             <label className="form-label">Currency</label>
             <select className="form-select" value={form.currency} onChange={e => setF('currency', e.target.value)}>
