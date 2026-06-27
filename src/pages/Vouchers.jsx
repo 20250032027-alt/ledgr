@@ -22,6 +22,9 @@ async function exportVouchersToExcel(vouchers, clients) {
 
   const summaryRows = vouchers.map(v => {
     const { debit, credit, balanced } = voucherTotals(v.entries)
+    const entries = v.entries || []
+    const debitAccounts = entries.filter(e => parseFloat(e.debit || 0) > 0).map(e => e.account).filter(Boolean).join(', ')
+    const creditAccounts = entries.filter(e => parseFloat(e.credit || 0) > 0).map(e => e.account).filter(Boolean).join(', ')
     return {
       'Voucher #': v.number,
       Type: v.type,
@@ -29,6 +32,8 @@ async function exportVouchersToExcel(vouchers, clients) {
       Reference: v.reference || '',
       Client: clientName(v.clientId),
       Memo: v.memo || '',
+      'Debit Account': debitAccounts,
+      'Credit Account': creditAccounts,
       'Debit Total': debit,
       'Credit Total': credit,
       Balanced: balanced ? 'Yes' : 'No',
@@ -52,10 +57,11 @@ async function exportVouchersToExcel(vouchers, clients) {
   const wb = XLSX.utils.book_new()
 
   const wsSummary = XLSX.utils.json_to_sheet(summaryRows)
-  setColumnMoneyFormat(XLSX, wsSummary, summaryRows.length, [6, 7])
+  setColumnMoneyFormat(XLSX, wsSummary, summaryRows.length, [8, 9])
   wsSummary['!cols'] = [
     { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 },
-    { wch: 18 }, { wch: 28 }, { wch: 13 }, { wch: 13 }, { wch: 9 },
+    { wch: 18 }, { wch: 28 }, { wch: 24 }, { wch: 24 },
+    { wch: 13 }, { wch: 13 }, { wch: 9 },
   ]
 
   const wsEntries = XLSX.utils.json_to_sheet(entryRows)
@@ -320,6 +326,8 @@ export default function Vouchers() {
                 <th>Number</th>
                 <th>Type</th>
                 <th>Date</th>
+                <th>Debit Account</th>
+                <th>Credit Account</th>
                 <th>Memo</th>
                 <th>Reference</th>
                 <th style={{ textAlign: 'right' }}>Debit Total</th>
@@ -329,6 +337,11 @@ export default function Vouchers() {
             <tbody>
               {[...filtered].reverse().map(v => {
                 const { debit } = voucherTotals(v.entries)
+                const entries = v.entries || []
+                const debitAccounts = entries.filter(e => parseFloat(e.debit || 0) > 0).map(e => e.account).filter(Boolean)
+                const creditAccounts = entries.filter(e => parseFloat(e.credit || 0) > 0).map(e => e.account).filter(Boolean)
+                const debitLabel = debitAccounts.length > 0 ? debitAccounts.join(', ') : '—'
+                const creditLabel = creditAccounts.length > 0 ? creditAccounts.join(', ') : '—'
                 return (
                   <tr key={v.id}>
                     <td className="td-mono" style={{ fontWeight: 600 }}>{v.number}</td>
@@ -336,7 +349,17 @@ export default function Vouchers() {
                       <span className="badge badge-blue">{v.type}</span>
                     </td>
                     <td className="td-mono">{v.date || fmtDate(v.createdAt)}</td>
-                    <td style={{ color: 'var(--text-2)', fontSize: 12, maxWidth: 200 }}>
+                    <td style={{ fontSize: 12, maxWidth: 160 }}>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={debitLabel}>
+                        {debitLabel}
+                      </div>
+                    </td>
+                    <td style={{ fontSize: 12, maxWidth: 160 }}>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={creditLabel}>
+                        {creditLabel}
+                      </div>
+                    </td>
+                    <td style={{ color: 'var(--text-2)', fontSize: 12, maxWidth: 180 }}>
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {v.memo || '—'}
                       </div>
