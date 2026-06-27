@@ -1,70 +1,93 @@
 import { useState, useMemo } from 'react'
 import { useStore } from '../store/useStore.jsx'
 import { fmt, fmtDate } from '../utils'
-import { BookOpen, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import { BookOpen, ChevronDown, ChevronUp, Download, Search, X } from 'lucide-react'
 
 function normalSide(type) {
   return (type === 'asset' || type === 'expense') ? 1 : -1
 }
 
-async function exportToExcel(accountSections, currency) {
+async function exportToExcel(accountSections, currency, dateFrom, dateTo) {
   const XLSX = await import('xlsx')
   const MONEY_FMT = '#,##0.00;(#,##0.00);"-"'
 
   const rows = []
-  accountSections.forEach(({ account, entries, openingBalance, closingBalance }) => {
+
+  // Header row showing applied filters
+  if (dateFrom || dateTo) {
+    rows.push({ Account: `Date range: ${dateFrom || 'start'} to ${dateTo || 'end'}` })
+    rows.push({})
+  }
+
+  accountSections.forEach(({ account, entries, closingBalance }) => {
+    // Account header row
     rows.push({
       Account: account.name,
       Code: account.code || '',
       Type: account.type,
       Date: '',
       'Voucher #': '',
-      Memo: '',
+      'Memo / Description': '',
       Debit: '',
       Credit: '',
       Balance: '',
     })
-    let running = openingBalance
+
+    let running = 0
     entries.forEach(e => {
       running += e.debit - e.credit
       rows.push({
         Account: '',
         Code: '',
         Type: '',
-        Date: e.date,
+        Date: e.rawDate || e.date,
         'Voucher #': e.voucherNumber,
-        Memo: e.memo || e.description || '',
-        Debit: e.debit || '',
-        Credit: e.credit || '',
+        'Memo / Description': e.memo || e.description || '',
+        Debit: e.debit > 0 ? e.debit : '',
+        Credit: e.credit > 0 ? e.credit : '',
         Balance: running,
       })
     })
+
+    // Totals row
     rows.push({
       Account: 'Closing Balance',
       Code: '',
       Type: '',
       Date: '',
       'Voucher #': '',
-      Memo: '',
-      Debit: '',
-      Credit: '',
+      'Memo / Description': '',
+      Debit: entries.reduce((s, e) => s + e.debit, 0),
+      Credit: entries.reduce((s, e) => s + e.credit, 0),
       Balance: closingBalance,
     })
     rows.push({})
   })
 
   const ws = XLSX.utils.json_to_sheet(rows)
+
+  // Apply money format to Debit, Credit, Balance columns (G=6, H=7, I=8)
+  const moneyFmt = '#,##0.00;(#,##0.00);"-"'
+  const rowCount = rows.length
+  ;[6, 7, 8].forEach(c => {
+    for (let r = 1; r <= rowCount; r++) {
+      const ref = XLSX.utils.encode_cell({ r, c })
+      if (ws[ref] && typeof ws[ref].v === 'number') ws[ref].z = moneyFmt
+    }
+  })
+
   ws['!cols'] = [
     { wch: 28 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 12 },
-    { wch: 32 }, { wch: 13 }, { wch: 13 }, { wch: 13 },
+    { wch: 34 }, { wch: 13 }, { wch: 13 }, { wch: 14 },
   ]
+
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Account Listing')
   const dateStr = new Date().toISOString().slice(0, 10)
   XLSX.writeFile(wb, `ledgr-account-listing-${dateStr}.xlsx`)
 }
 
-function AccountSection({ account, entries, openingBalance, closingBalance, currency }) {
+function AccountSection({ account, entries, closingBalance, currency }) {
   const [open, setOpen] = useState(true)
 
   let running = 0
@@ -78,7 +101,6 @@ function AccountSection({ account, entries, openingBalance, closingBalance, curr
 
   return (
     <div className="card" style={{ marginBottom: 12 }}>
-      {/* Account header */}
       <div
         onClick={() => setOpen(v => !v)}
         style={{
@@ -193,24 +215,41 @@ function AccountSection({ account, entries, openingBalance, closingBalance, curr
 export default function AccountListing() {
   const { accounts, vouchers, settings } = useStore()
   const cur = settings.currency
+
+  const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [exporting, setExporting] = useState(false)
 
-  // Build per-account entry lists from vouchers
-  const accountSections = useMemo(() => {
-    // Map account name (lowercase) -> account object
-    const accountMap = {}
-    accounts.forEach(a => { accountMap[a.name.trim().toLowerCase()] = a })
+  function clearFilters() {
+    setSearch('')
+    setTypeFilter('all')
+    setDateFrom('')
+    setDateTo('')
+  }
 
-    // Collect entries per account
+  const hasFilters = search || typeFilter !== 'all' || dateFrom || dateTo
+
+  // Build per-account entry lists from vouchers, respecting date filters
+  const accountSections = useMemo(() => {
     const entryMap = {}
+
     vouchers.forEach(v => {
+      const rawDate = v.date || ''
+      const displayDate = v.date || fmtDate(v.createdAt)
+
+      // Date range filter — applied at the voucher level
+      if (dateFrom && rawDate && rawDate < dateFrom) return
+      if (dateTo && rawDate && rawDate > dateTo) return
+
       ;(v.entries || []).forEach(e => {
         if (!e.account) return
         const key = e.account.trim().toLowerCase()
         if (!entryMap[key]) entryMap[key] = []
         entryMap[key].push({
-          date: v.date || fmtDate(v.createdAt),
+          rawDate,
+          date: displayDate,
           voucherNumber: v.number,
           memo: v.memo,
           description: e.description,
@@ -220,57 +259,55 @@ export default function AccountListing() {
       })
     })
 
-    // Build sections for registered accounts that have activity
+    // Build sections for registered CoA accounts
     const sections = accounts
       .filter(a => entryMap[a.name.trim().toLowerCase()]?.length > 0)
       .map(a => {
-        const entries = entryMap[a.name.trim().toLowerCase()] || []
-        // Sort entries by date then voucher number
+        const entries = [...(entryMap[a.name.trim().toLowerCase()] || [])]
         entries.sort((x, y) => {
-          if (x.date < y.date) return -1
-          if (x.date > y.date) return 1
+          if (x.rawDate < y.rawDate) return -1
+          if (x.rawDate > y.rawDate) return 1
           return x.voucherNumber.localeCompare(y.voucherNumber)
         })
         const totalDebit = entries.reduce((s, e) => s + e.debit, 0)
         const totalCredit = entries.reduce((s, e) => s + e.credit, 0)
-        return {
-          account: a,
-          entries,
-          openingBalance: 0,
-          closingBalance: totalDebit - totalCredit,
-        }
+        return { account: a, entries, closingBalance: totalDebit - totalCredit }
       })
 
-    // Also include orphan accounts (in vouchers but not in Chart of Accounts)
+    // Orphan accounts (not in CoA)
     const registered = new Set(accounts.map(a => a.name.trim().toLowerCase()))
     Object.entries(entryMap).forEach(([key, entries]) => {
       if (registered.has(key)) return
-      const originalName = entries[0] ? (() => {
+      const originalName = (() => {
         for (const v of vouchers) {
           for (const e of (v.entries || [])) {
             if (e.account?.trim().toLowerCase() === key) return e.account.trim()
           }
         }
         return key
-      })() : key
-
-      entries.sort((x, y) => x.date < y.date ? -1 : x.date > y.date ? 1 : 0)
-      const totalDebit = entries.reduce((s, e) => s + e.debit, 0)
-      const totalCredit = entries.reduce((s, e) => s + e.credit, 0)
+      })()
+      const sorted = [...entries].sort((x, y) => x.rawDate < y.rawDate ? -1 : x.rawDate > y.rawDate ? 1 : 0)
+      const totalDebit = sorted.reduce((s, e) => s + e.debit, 0)
+      const totalCredit = sorted.reduce((s, e) => s + e.credit, 0)
       sections.push({
         account: { name: originalName + ' ⚠', code: '', type: 'asset' },
-        entries,
-        openingBalance: 0,
+        entries: sorted,
         closingBalance: totalDebit - totalCredit,
       })
     })
 
     return sections
-  }, [accounts, vouchers])
+  }, [accounts, vouchers, dateFrom, dateTo])
 
-  const filtered = typeFilter === 'all'
-    ? accountSections
-    : accountSections.filter(s => s.account.type === typeFilter)
+  // Apply account search + type filter
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return accountSections.filter(s => {
+      const matchSearch = !q || s.account.name.toLowerCase().includes(q) || (s.account.code || '').toLowerCase().includes(q)
+      const matchType = typeFilter === 'all' || s.account.type === typeFilter
+      return matchSearch && matchType
+    })
+  }, [accountSections, search, typeFilter])
 
   const TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense']
 
@@ -286,7 +323,7 @@ export default function AccountListing() {
           disabled={filtered.length === 0 || exporting}
           onClick={async () => {
             setExporting(true)
-            try { await exportToExcel(filtered, cur) }
+            try { await exportToExcel(filtered, cur, dateFrom, dateTo) }
             finally { setExporting(false) }
           }}
         >
@@ -294,20 +331,67 @@ export default function AccountListing() {
         </button>
       </div>
 
-      <div className="toolbar" style={{ marginBottom: 16 }}>
+      {/* Filters toolbar */}
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16, alignItems: 'center',
+      }}>
+        {/* Account search */}
+        <div className="search-bar" style={{ minWidth: 200, flex: '1 1 200px' }}>
+          <Search size={14} color="var(--text-3)" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search account name or code…"
+          />
+        </div>
+
+        {/* Type filter */}
         <select
           className="form-select"
           style={{ width: 'auto', fontSize: 12 }}
           value={typeFilter}
           onChange={e => setTypeFilter(e.target.value)}
         >
-          <option value="all">All Account Types</option>
+          <option value="all">All Types</option>
           {TYPES.map(t => (
             <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}s</option>
           ))}
         </select>
-        <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-          {filtered.length} account{filtered.length !== 1 ? 's' : ''} with activity
+
+        {/* Date from */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>From</label>
+          <input
+            className="form-input"
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            style={{ fontSize: 12, padding: '5px 8px', width: 140 }}
+          />
+        </div>
+
+        {/* Date to */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 11, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>To</label>
+          <input
+            className="form-input"
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            style={{ fontSize: 12, padding: '5px 8px', width: 140 }}
+          />
+        </div>
+
+        {/* Clear filters */}
+        {hasFilters && (
+          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '5px 10px' }} onClick={clearFilters}>
+            <X size={13} /> Clear
+          </button>
+        )}
+
+        <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 4 }}>
+          {filtered.length} account{filtered.length !== 1 ? 's' : ''}
+          {dateFrom || dateTo ? ` · ${dateFrom || '…'} → ${dateTo || '…'}` : ''}
         </span>
       </div>
 
@@ -323,7 +407,10 @@ export default function AccountListing() {
         <div className="card">
           <div className="empty-state">
             <BookOpen size={36} color="var(--border2)" />
-            <div style={{ fontWeight: 600 }}>No accounts of this type have activity</div>
+            <div style={{ fontWeight: 600 }}>No accounts match your filters</div>
+            <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={clearFilters}>
+              <X size={13} /> Clear filters
+            </button>
           </div>
         </div>
       ) : (
