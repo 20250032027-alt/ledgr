@@ -18,7 +18,7 @@ function buildTrialBalance(vouchers) {
   })).sort((a, b) => a.account.localeCompare(b.account))
 }
 
-function categorize(account) {
+function heuristicCategorize(account) {
   const a = account.toLowerCase()
   if (a.includes('cash') || a.includes('bank') || a.includes('receivable') || a.includes('inventory') || a.includes('prepaid') || a.includes('equipment')) return 'Assets'
   if (a.includes('payable') || a.includes('unearned') || a.includes('tax')) return 'Liabilities'
@@ -28,17 +28,35 @@ function categorize(account) {
   return 'Other'
 }
 
+const TYPE_TO_CATEGORY = {
+  asset: 'Assets', liability: 'Liabilities', equity: 'Equity',
+  revenue: 'Revenue', expense: 'Expenses',
+}
+
+function buildAccountTypeMap(accounts) {
+  const map = {}
+  accounts.forEach(a => { map[a.name.trim().toLowerCase()] = a.type })
+  return map
+}
+
+function categorize(account, typeMap) {
+  const type = typeMap[account.trim().toLowerCase()]
+  if (type) return TYPE_TO_CATEGORY[type] || 'Other'
+  return heuristicCategorize(account)
+}
+
 export default function TrialBalance() {
-  const { vouchers, settings } = useStore()
+  const { vouchers, accounts, settings } = useStore()
   const cur = settings.currency
   const rows = buildTrialBalance(vouchers)
   const totalDebit = rows.reduce((s, r) => s + r.debit, 0)
   const totalCredit = rows.reduce((s, r) => s + r.credit, 0)
   const balanced = Math.abs(totalDebit - totalCredit) < 0.01
 
+  const typeMap = buildAccountTypeMap(accounts)
   const grouped = {}
   rows.forEach(r => {
-    const cat = categorize(r.account)
+    const cat = categorize(r.account, typeMap)
     if (!grouped[cat]) grouped[cat] = []
     grouped[cat].push(r)
   })

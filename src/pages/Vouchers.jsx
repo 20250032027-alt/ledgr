@@ -3,14 +3,6 @@ import { useStore } from '../store/useStore.jsx'
 import { fmt, fmtDate, voucherTotals } from '../utils'
 import { Plus, X, Trash2, Pencil, Search, CheckCircle, AlertCircle, FileText } from 'lucide-react'
 
-const ACCOUNTS = [
-  'Cash', 'Accounts Receivable', 'Accounts Payable', 'Sales Revenue',
-  'Service Revenue', 'Cost of Goods Sold', 'Salaries Expense',
-  'Rent Expense', 'Utilities Expense', 'Office Supplies', 'Equipment',
-  'Prepaid Expenses', 'Unearned Revenue', 'Capital', 'Retained Earnings',
-  'Tax Payable', 'Bank', 'Petty Cash', 'Inventory', 'Other',
-]
-
 const TYPES = ['general', 'cash receipt', 'cash disbursement', 'expense', 'adjustment']
 
 function EntryRow({ entry, onChange, onRemove, index }) {
@@ -68,7 +60,7 @@ function EntryRow({ entry, onChange, onRemove, index }) {
   )
 }
 
-function VoucherModal({ voucher, onClose, onSave, clients }) {
+function VoucherModal({ voucher, onClose, onSave, clients, accounts }) {
   const blankEntry = () => ({ account: '', description: '', debit: '', credit: '', id: crypto.randomUUID() })
   const [form, setForm] = useState(voucher || {
     type: 'general', date: new Date().toISOString().slice(0, 10),
@@ -125,8 +117,13 @@ function VoucherModal({ voucher, onClose, onSave, clients }) {
         </div>
 
         <datalist id="accounts-list">
-          {ACCOUNTS.map(a => <option key={a} value={a} />)}
+          {accounts.map(a => <option key={a.id} value={a.name} />)}
         </datalist>
+        {accounts.length === 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
+            Tip: set up your Chart of Accounts first so account names autocomplete here.
+          </div>
+        )}
 
         <div style={{ overflowX: 'auto', marginBottom: 12 }}>
           <table style={{ fontSize: 12 }}>
@@ -184,7 +181,7 @@ function VoucherModal({ voucher, onClose, onSave, clients }) {
 }
 
 export default function Vouchers() {
-  const { vouchers, addVoucher, updateVoucher, deleteVoucher, clients, settings } = useStore()
+  const { vouchers, addVoucher, updateVoucher, deleteVoucher, clients, accounts, settings } = useStore()
   const [modal, setModal] = useState(null)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -281,6 +278,7 @@ export default function Vouchers() {
         <VoucherModal
           voucher={modal === 'new' ? null : modal}
           clients={clients}
+          accounts={accounts}
           onClose={() => setModal(null)}
           onSave={form => {
             if (modal === 'new') addVoucher(form)

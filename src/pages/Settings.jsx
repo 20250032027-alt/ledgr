@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useStore } from '../store/useStore.jsx'
-import { Settings as SettingsIcon, Save } from 'lucide-react'
+import { supabase } from '../lib/supabase'
+import { Save, LogOut, Cloud } from 'lucide-react'
 
-export default function Settings() {
-  const { settings, updateSettings } = useStore()
+export default function Settings({ userEmail }) {
+  const { settings, updateSettings, deleteAllData } = useStore()
   const [form, setForm] = useState(settings)
   const [saved, setSaved] = useState(false)
 
@@ -59,17 +60,27 @@ export default function Settings() {
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
+        <div className="card-title" style={{ marginBottom: 12 }}>Account</div>
+        <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Cloud size={14} /> Signed in as <strong style={{ color: 'var(--text-1)' }}>{userEmail}</strong>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={() => supabase.auth.signOut()}>
+          <LogOut size={14} /> Sign Out
+        </button>
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
         <div className="card-title" style={{ marginBottom: 12 }}>Data</div>
         <div style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 12 }}>
-          All data is stored locally in your browser. No data is sent to any server.
+          Your data is synced to your Supabase cloud database, so it's backed up and
+          available from any device you sign into.
         </div>
         <button className="btn btn-danger btn-sm" onClick={() => {
-          if (confirm('Clear all data? This cannot be undone.')) {
-            localStorage.removeItem('ledgr_data')
-            location.reload()
+          if (confirm('Delete all accounts, clients, vouchers and invoices? This cannot be undone.')) {
+            deleteAllData()
           }
         }}>
-          Clear All Data
+          Delete All My Data
         </button>
       </div>
     </div>
