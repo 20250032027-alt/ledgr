@@ -12,149 +12,314 @@ function printInvoice(bill, settings) {
   const total = bill.total ?? subtotal + tax
   const taxRate = settings.taxRate ?? 12
 
+  // Format date nicely e.g. "June 27, 2026"
+  function fmtPrint(iso) {
+    if (!iso) return '—'
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+  }
+
+  const statusLabel = (bill.status || 'unpaid').toUpperCase()
+  const statusColor = bill.status === 'paid' ? '#16a34a' : bill.status === 'overdue' ? '#dc2626' : '#b45309'
+
   w.document.write(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8"/>
   <title>Invoice ${bill.number}</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1a1a2e; background: #fff; padding: 0; }
-    .page { max-width: 780px; margin: 0 auto; padding: 48px 48px 60px; }
 
-    /* Header */
-    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
-    .firm-name { font-size: 24px; font-weight: 800; color: #1a1a2e; letter-spacing: -0.5px; }
-    .firm-details { font-size: 11px; color: #64748b; margin-top: 4px; line-height: 1.6; }
-    .invoice-title { text-align: right; }
-    .invoice-title h1 { font-size: 32px; font-weight: 900; color: #2563eb; letter-spacing: -1px; }
-    .invoice-meta { font-size: 11px; color: #64748b; margin-top: 6px; line-height: 1.8; text-align: right; }
-    .invoice-meta strong { color: #1a1a2e; }
+    body {
+      font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+      font-size: 13px;
+      color: #111827;
+      background: #fff;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
 
-    /* Divider */
-    .divider { border: none; border-top: 2px solid #2563eb; margin: 0 0 32px; }
+    .page {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 56px 56px 64px;
+    }
 
-    /* Bill To */
-    .bill-section { display: flex; justify-content: space-between; margin-bottom: 36px; gap: 24px; }
-    .bill-to { flex: 1; }
-    .bill-to .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-bottom: 6px; }
-    .bill-to .client-name { font-size: 16px; font-weight: 700; color: #1a1a2e; }
-    .bill-to .client-detail { font-size: 12px; color: #64748b; margin-top: 2px; }
-    .status-badge { padding: 4px 14px; border-radius: 99px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block; }
-    .status-paid { background: #dcfce7; color: #16a34a; }
-    .status-unpaid { background: #fef3c7; color: #d97706; }
-    .status-overdue { background: #fee2e2; color: #dc2626; }
+    /* ── Top accent bar ── */
+    .accent-bar {
+      height: 5px;
+      background: #1e3a5f;
+      border-radius: 3px 3px 0 0;
+      margin-bottom: 40px;
+    }
 
-    /* Line items */
-    table { width: 100%; border-collapse: collapse; margin-bottom: 0; }
-    thead tr { background: #1e293b; }
-    thead th { padding: 10px 14px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; text-align: left; }
-    thead th:last-child, thead th:nth-last-child(2), thead th:nth-last-child(3) { text-align: right; }
-    tbody tr { border-bottom: 1px solid #f1f5f9; }
-    tbody tr:nth-child(even) { background: #f8fafc; }
-    tbody td { padding: 11px 14px; font-size: 13px; color: #334155; }
-    tbody td:last-child, tbody td:nth-last-child(2), tbody td:nth-last-child(3) { text-align: right; font-family: 'Courier New', monospace; }
+    /* ── Header ── */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 44px;
+    }
+    .firm-block { flex: 1; }
+    .firm-name {
+      font-size: 21px;
+      font-weight: 800;
+      color: #111827;
+      letter-spacing: -0.3px;
+      margin-bottom: 6px;
+    }
+    .firm-details {
+      font-size: 11.5px;
+      color: #6b7280;
+      line-height: 1.7;
+    }
+    .invoice-block { text-align: right; }
+    .invoice-label {
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      color: #1e3a5f;
+      margin-bottom: 12px;
+    }
+    .invoice-meta-row {
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 2;
+    }
+    .invoice-meta-row span {
+      display: inline-block;
+      width: 42px;
+      font-weight: 600;
+      color: #374151;
+    }
 
-    /* Totals */
-    .totals { display: flex; justify-content: flex-end; margin-top: 0; }
-    .totals-box { width: 280px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
-    .totals-row { display: flex; justify-content: space-between; padding: 9px 16px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
-    .totals-row:last-child { border-bottom: none; background: #1e293b; color: #fff; font-weight: 800; font-size: 15px; }
-    .totals-row span:last-child { font-family: 'Courier New', monospace; }
-    .totals-label { color: #64748b; }
+    /* ── Thin rule ── */
+    .rule {
+      border: none;
+      border-top: 1px solid #e5e7eb;
+      margin: 0 0 36px;
+    }
 
-    /* Notes */
-    .notes-section { margin-top: 36px; padding: 16px; background: #f8fafc; border-radius: 8px; border-left: 3px solid #2563eb; }
-    .notes-section .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-bottom: 6px; }
-    .notes-section p { font-size: 12px; color: #475569; line-height: 1.6; }
+    /* ── Bill To / Status row ── */
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 36px;
+      gap: 24px;
+    }
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: #9ca3af;
+      margin-bottom: 7px;
+    }
+    .client-name {
+      font-size: 17px;
+      font-weight: 700;
+      color: #111827;
+    }
+    .status-pill {
+      display: inline-block;
+      padding: 5px 16px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: ${statusColor};
+      border: 1.5px solid ${statusColor};
+    }
 
-    /* Footer */
-    .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; }
-    .footer-left { font-size: 11px; color: #94a3b8; }
-    .footer-right { font-size: 11px; color: #94a3b8; text-align: right; }
+    /* ── Line items table ── */
+    table { width: 100%; border-collapse: collapse; }
+    thead tr {
+      border-bottom: 2px solid #1e3a5f;
+    }
+    thead th {
+      padding: 9px 12px;
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #1e3a5f;
+      text-align: left;
+    }
+    thead th.r { text-align: right; }
+    tbody tr { border-bottom: 1px solid #f3f4f6; }
+    tbody tr:last-child { border-bottom: 2px solid #e5e7eb; }
+    tbody td {
+      padding: 11px 12px;
+      font-size: 13px;
+      color: #374151;
+    }
+    tbody td.r {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-weight: 500;
+    }
+    tbody td.desc { color: #111827; }
 
-    /* Receivable accounts box */
-    .ar-box { margin-bottom: 28px; padding: 12px 16px; background: #eff6ff; border-radius: 8px; border: 1px solid #bfdbfe; }
-    .ar-box .label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #3b82f6; margin-bottom: 6px; }
-    .ar-entry { font-size: 12px; color: #1e40af; display: flex; justify-content: space-between; padding: 2px 0; }
+    /* ── Totals ── */
+    .totals-wrap {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 20px;
+      margin-bottom: 40px;
+    }
+    .totals-table { width: 260px; }
+    .t-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 7px 0;
+      font-size: 13px;
+      border-bottom: 1px solid #f3f4f6;
+      color: #6b7280;
+    }
+    .t-row .val {
+      font-variant-numeric: tabular-nums;
+      font-weight: 500;
+      color: #374151;
+    }
+    .t-total {
+      display: flex;
+      justify-content: space-between;
+      padding: 11px 14px;
+      margin-top: 4px;
+      background: #1e3a5f;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 800;
+      color: #fff;
+    }
+    .t-total .val { font-variant-numeric: tabular-nums; }
+
+    /* ── Notes ── */
+    .notes-block {
+      padding: 14px 18px;
+      background: #f9fafb;
+      border-left: 3px solid #1e3a5f;
+      border-radius: 0 6px 6px 0;
+      margin-bottom: 48px;
+    }
+    .notes-block p {
+      font-size: 12.5px;
+      color: #4b5563;
+      line-height: 1.65;
+      margin-top: 6px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid #e5e7eb;
+      padding-top: 18px;
+      text-align: center;
+    }
+    .footer p {
+      font-size: 12px;
+      color: #9ca3af;
+      font-style: italic;
+    }
 
     @media print {
-      body { padding: 0; }
-      .page { padding: 24px 32px; }
-      @page { margin: 10mm; }
+      .page { padding: 0; }
+      @page { size: A4; margin: 14mm 16mm; }
     }
   </style>
 </head>
 <body>
 <div class="page">
+
+  <div class="accent-bar"></div>
+
+  <!-- Header -->
   <div class="header">
-    <div>
-      <div class="firm-name">${settings.company || 'Firm Name'}</div>
-      <div class="firm-details">${settings.address ? settings.address.replace(/\n/g, '<br>') : ''}</div>
+    <div class="firm-block">
+      <div class="firm-name">${settings.company || 'Your Firm'}</div>
+      ${settings.address
+        ? `<div class="firm-details">${settings.address.replace(/\n/g, '<br>')}</div>`
+        : ''}
     </div>
-    <div class="invoice-title">
-      <h1>INVOICE</h1>
-      <div class="invoice-meta">
-        <div>No. <strong>${bill.number}</strong></div>
-        <div>Date: <strong>${bill.date || new Date().toISOString().slice(0, 10)}</strong></div>
-        ${bill.dueDate ? `<div>Due: <strong>${bill.dueDate}</strong></div>` : ''}
+    <div class="invoice-block">
+      <div class="invoice-label">INVOICE</div>
+      <div class="invoice-meta-row">
+        <span>No.</span> ${bill.number}<br>
+        <span>Date</span> ${fmtPrint(bill.date)}<br>
+        ${bill.dueDate ? `<span>Due</span> ${fmtPrint(bill.dueDate)}` : ''}
       </div>
     </div>
   </div>
 
-  <hr class="divider">
+  <hr class="rule">
 
-  <div class="bill-section">
-    <div class="bill-to">
-      <div class="label">Bill To</div>
+  <!-- Bill To / Status -->
+  <div class="meta-row">
+    <div>
+      <div class="section-label">Bill To</div>
       <div class="client-name">${bill.clientName || '—'}</div>
     </div>
     <div style="text-align:right">
-      <div class="label">Status</div>
-      <span class="status-badge status-${bill.status || 'unpaid'}">${bill.status || 'unpaid'}</span>
+      <div class="section-label">Status</div>
+      <div class="status-pill">${statusLabel}</div>
     </div>
   </div>
 
+  <!-- Line items -->
   <table>
     <thead>
       <tr>
-        <th style="width:50%">Description</th>
-        <th style="width:12%;text-align:right">Qty</th>
-        <th style="width:18%;text-align:right">Unit Price</th>
-        <th style="width:20%;text-align:right">Amount</th>
+        <th style="width:52%">Description</th>
+        <th class="r" style="width:11%">Qty</th>
+        <th class="r" style="width:18%">Unit Price</th>
+        <th class="r" style="width:19%">Amount</th>
       </tr>
     </thead>
     <tbody>
       ${lines.map(l => {
         const amt = parseFloat(l.qty || 0) * parseFloat(l.rate || 0)
         return `<tr>
-          <td>${l.description || '—'}</td>
-          <td style="text-align:right">${l.qty}</td>
-          <td style="text-align:right">${fmt(parseFloat(l.rate || 0))}</td>
-          <td style="text-align:right">${fmt(amt)}</td>
+          <td class="desc">${l.description || '—'}</td>
+          <td class="r">${l.qty}</td>
+          <td class="r">${fmt(parseFloat(l.rate || 0))}</td>
+          <td class="r">${fmt(amt)}</td>
         </tr>`
       }).join('')}
     </tbody>
   </table>
 
-  <div class="totals">
-    <div class="totals-box">
-      <div class="totals-row"><span class="totals-label">Subtotal</span><span>${fmt(subtotal)}</span></div>
-      <div class="totals-row"><span class="totals-label">VAT (${taxRate}%)</span><span>${fmt(tax)}</span></div>
-      <div class="totals-row"><span>Total</span><span>${fmt(total)}</span></div>
+  <!-- Totals -->
+  <div class="totals-wrap">
+    <div class="totals-table">
+      <div class="t-row">
+        <span>Subtotal</span>
+        <span class="val">${fmt(subtotal)}</span>
+      </div>
+      <div class="t-row">
+        <span>VAT (${taxRate}%)</span>
+        <span class="val">${fmt(tax)}</span>
+      </div>
+      <div class="t-total">
+        <span>Total Due</span>
+        <span class="val">${fmt(total)}</span>
+      </div>
     </div>
   </div>
 
+  <!-- Notes -->
   ${bill.notes ? `
-  <div class="notes-section">
-    <div class="label">Notes</div>
+  <div class="notes-block">
+    <div class="section-label">Notes</div>
     <p>${bill.notes.replace(/\n/g, '<br>')}</p>
   </div>` : ''}
 
+  <!-- Footer -->
   <div class="footer">
-    <div class="footer-left">Generated by Ledgr · ${new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
-    <div class="footer-right">Thank you for your business.</div>
+    <p>Thank you for your business.</p>
   </div>
+
 </div>
 <script>window.onload = () => { window.print(); }</script>
 </body>
