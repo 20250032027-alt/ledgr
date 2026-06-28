@@ -148,12 +148,316 @@ function EntryRow({ entry, onChange, onRemove, onAddBelow, accounts, isLast }) {
   )
 }
 
+// ── Accounting Calculator ─────────────────────────────────────────────────
+function AccountingCalc({ onUseDebit, onUseCredit, taxRate = 12 }) {
+  const [display, setDisplay] = useState('0')
+  const [tape, setTape]       = useState([]) // [{expr, result}]
+  const [expr, setExpr]       = useState('')  // pending expression string
+  const [justEvaled, setJustEvaled] = useState(false)
+  const [splitN, setSplitN]   = useState('2')
+  const [mode, setMode]       = useState('calc') // 'calc' | 'split' | 'tax'
+  const [taxMode, setTaxMode] = useState('excl') // 'excl' (add tax) | 'incl' (strip tax)
+
+  const MAX_TAPE = 8
+
+  function safeEval(str) {
+    try {
+      // Replace × and ÷ with JS operators
+      const clean = str.replace(/×/g,'*').replace(/÷/g,'/')
+      // Only allow safe chars
+      if (!/^[\d\s\+\-\*\/\.\(\)]+$/.test(clean)) return null
+      // eslint-disable-next-line no-new-func
+      const result = Function('"use strict"; return (' + clean + ')')()
+      if (!isFinite(result)) return null
+      return Math.round(result * 100) / 100
+    } catch { return null }
+  }
+
+  function pushTape(expression, result) {
+    setTape(t => [{expr: expression, result},...t].slice(0, MAX_TAPE))
+  }
+
+  function pressDigit(d) {
+    if (justEvaled) { setDisplay(d); setExpr(d); setJustEvaled(false); return }
+    const next = display === '0' && d !== '.' ? d : display + d
+    setDisplay(next)
+    setExpr(e => e + d)
+  }
+
+  function pressOp(op) {
+    setJustEvaled(false)
+    // Evaluate any pending expression first
+    const result = safeEval(expr)
+    if (result !== null) {
+      const numStr = String(result)
+      setDisplay(numStr)
+      setExpr(numStr + op)
+      pushTape(expr, result)
+    } else {
+      setExpr(e => e + op)
+    }
+    setDisplay('0')
+  }
+
+  function pressEqual() {
+    const result = safeEval(expr)
+    if (result === null) return
+    pushTape(expr + ' =', result)
+    setDisplay(String(result))
+    setExpr(String(result))
+    setJustEvaled(true)
+  }
+
+  function pressClear() {
+    setDisplay('0'); setExpr(''); setJustEvaled(false)
+  }
+
+  function pressBackspace() {
+    if (justEvaled) { pressClear(); return }
+    const next = display.length > 1 ? display.slice(0, -1) : '0'
+    setDisplay(next)
+    setExpr(e => e.length > 1 ? e.slice(0, -1) : '')
+  }
+
+  function pressPercent() {
+    const val = parseFloat(display)
+    if (isNaN(val)) return
+    const result = Math.round(val / 100 * 100) / 100
+    setDisplay(String(result))
+    setExpr(String(result))
+    setJustEvaled(true)
+  }
+
+  function pressDot() {
+    if (display.includes('.')) return
+    setDisplay(d => d + '.')
+    setExpr(e => e + '.')
+  }
+
+  function useTape(val) {
+    const s = String(val)
+    setDisplay(s); setExpr(s); setJustEvaled(true)
+  }
+
+  const currentVal = parseFloat(display) || 0
+
+  // Split
+  const splitAmt = splitN && parseFloat(splitN) > 0
+    ? Math.round(currentVal / parseFloat(splitN) * 100) / 100
+    : 0
+
+  // Tax
+  const taxDec = taxRate / 100
+  const taxExcl = Math.round(currentVal * taxDec * 100) / 100          // tax on top of net
+  const netFromGross = Math.round(currentVal / (1 + taxDec) * 100) / 100 // strip tax from gross
+  const taxFromGross = Math.round((currentVal - netFromGross) * 100) / 100
+
+  const btnBase = {
+    border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+    fontFamily: 'var(--mono)', fontWeight: 600, fontSize: 14,
+    transition: 'all 0.1s', padding: '10px 0', userSelect: 'none',
+  }
+  const btnNum  = { ...btnBase, background: 'var(--surface3)', color: 'var(--text-1)' }
+  const btnOp   = { ...btnBase, background: 'var(--surface2)', color: 'var(--accent)', fontSize: 16 }
+  const btnEq   = { ...btnBase, background: 'var(--accent)', color: '#fff', fontSize: 16 }
+  const btnSpec = { ...btnBase, background: 'var(--surface2)', color: 'var(--text-2)', fontSize: 12 }
+
+  const grid4 = { display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 5 }
+
+  return (
+    <div style={{
+      width: 240, flexShrink: 0,
+      background: 'var(--surface2)',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-lg)',
+      padding: 14,
+      display: 'flex', flexDirection: 'column', gap: 10,
+      alignSelf: 'flex-start',
+      position: 'sticky', top: 0,
+    }}>
+      {/* Mode tabs */}
+      <div style={{ display: 'flex', background: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: 2 }}>
+        {[['calc','Calc'],['split','Split'],['tax','Tax']].map(([m, label]) => (
+          <button key={m} onClick={() => setMode(m)} style={{
+            flex: 1, padding: '4px 0', border: 'none', borderRadius: 'var(--radius-sm)',
+            fontSize: 11, fontWeight: 600, cursor: 'pointer', transition: 'all 0.12s',
+            background: mode === m ? 'var(--accent)' : 'transparent',
+            color: mode === m ? '#fff' : 'var(--text-3)',
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* Display */}
+      <div style={{
+        background: 'var(--bg)', borderRadius: 'var(--radius-sm)',
+        padding: '10px 12px', textAlign: 'right', minHeight: 52,
+      }}>
+        <div style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--mono)', minHeight: 14, wordBreak: 'break-all' }}>
+          {expr || ' '}
+        </div>
+        <div style={{ fontSize: 22, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--text-1)', letterSpacing: -1 }}>
+          {parseFloat(display).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+        </div>
+      </div>
+
+      {mode === 'calc' && <>
+        {/* Buttons */}
+        <div style={grid4}>
+          {[
+            ['C','spec'], ['⌫','spec'], ['%','spec'], ['÷','op'],
+            ['7','num'],  ['8','num'],  ['9','num'],  ['×','op'],
+            ['4','num'],  ['5','num'],  ['6','num'],  ['−','op'],
+            ['1','num'],  ['2','num'],  ['3','num'],  ['+','op'],
+            ['0','num'],  ['.','num'],  ['=','eq'],   ['=','eq'],
+          ].map(([k, t], i) => {
+            // Skip duplicate '=' (it spans 2 cols)
+            if (i === 19) return null
+            const isEqSpan = i === 18
+            const style = t === 'op' ? btnOp : t === 'eq' ? btnEq : t === 'spec' ? btnSpec : btnNum
+            return (
+              <button key={i} style={{ ...style, gridColumn: isEqSpan ? 'span 2' : undefined }}
+                onClick={() => {
+                  if (k === 'C') pressClear()
+                  else if (k === '⌫') pressBackspace()
+                  else if (k === '%') pressPercent()
+                  else if (k === '.') pressDot()
+                  else if (k === '=') pressEqual()
+                  else if (['+','−','×','÷'].includes(k)) pressOp(k === '−' ? '-' : k)
+                  else pressDigit(k)
+                }}>
+                {k}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Use result buttons */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, justifyContent: 'center' }}
+            onClick={() => onUseDebit(currentVal)}>
+            → DR
+          </button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, justifyContent: 'center' }}
+            onClick={() => onUseCredit(currentVal)}>
+            → CR
+          </button>
+        </div>
+
+        {/* Tape */}
+        {tape.length > 0 && (
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+            <div style={{ fontSize: 9, color: 'var(--text-3)', fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>History</div>
+            {tape.map((t, i) => (
+              <div key={i} onClick={() => useTape(t.result)}
+                style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', cursor: 'pointer', borderBottom: '1px solid var(--border)', fontSize: 11 }}>
+                <span style={{ color: 'var(--text-3)', fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }}>{t.expr}</span>
+                <span style={{ color: 'var(--text-2)', fontFamily: 'var(--mono)', fontWeight: 600 }}>{t.result.toLocaleString('en-PH', { maximumFractionDigits: 2 })}</span>
+              </div>
+            ))}
+            <button onClick={() => setTape([])} style={{ ...btnSpec, fontSize: 10, width: '100%', marginTop: 5, padding: '4px 0' }}>Clear history</button>
+          </div>
+        )}
+      </>}
+
+      {mode === 'split' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-3)' }}>Split the displayed amount evenly</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>÷</span>
+            <input className="form-input" type="number" min="2" max="99" value={splitN}
+              onChange={e => setSplitN(e.target.value)}
+              style={{ fontSize: 13, padding: '6px 10px', width: 70, fontFamily: 'var(--mono)' }} />
+            <span style={{ fontSize: 12, color: 'var(--text-2)' }}>parts</span>
+          </div>
+          {splitAmt > 0 && (
+            <>
+              <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '10px 12px' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-3)', marginBottom: 4 }}>Each part</div>
+                <div style={{ fontSize: 20, fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--green)' }}>
+                  {splitAmt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 3 }}>
+                  × {splitN} = {(splitAmt * parseFloat(splitN)).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                  {Math.abs(splitAmt * parseFloat(splitN) - currentVal) > 0.01
+                    ? ` (±${(currentVal - splitAmt * parseFloat(splitN)).toFixed(2)} rounding)`
+                    : ''}
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, justifyContent: 'center' }}
+                  onClick={() => onUseDebit(splitAmt)}>→ DR</button>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, justifyContent: 'center' }}
+                  onClick={() => onUseCredit(splitAmt)}>→ CR</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {mode === 'tax' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', background: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: 2 }}>
+            {[['excl','Add VAT'],['incl','Strip VAT']].map(([m, label]) => (
+              <button key={m} onClick={() => setTaxMode(m)} style={{
+                flex: 1, padding: '4px 0', border: 'none', borderRadius: 'var(--radius-sm)',
+                fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                background: taxMode === m ? 'var(--surface3)' : 'transparent',
+                color: taxMode === m ? 'var(--text-1)' : 'var(--text-3)',
+              }}>{label}</button>
+            ))}
+          </div>
+
+          {taxMode === 'excl' ? (
+            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Row label="Net amount" val={currentVal} />
+              <Row label={`VAT (${taxRate}%)`} val={taxExcl} color="var(--amber)" />
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+                <Row label="Gross total" val={currentVal + taxExcl} bold />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5, marginTop: 4 }}>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, justifyContent: 'center' }}
+                  onClick={() => onUseDebit(taxExcl)}>VAT → DR</button>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, justifyContent: 'center' }}
+                  onClick={() => onUseDebit(currentVal + taxExcl)}>Total → DR</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <Row label="Gross (VAT-incl)" val={currentVal} />
+              <Row label="Net (excl VAT)" val={netFromGross} color="var(--green)" />
+              <Row label={`VAT portion (${taxRate}%)`} val={taxFromGross} color="var(--amber)" />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5, marginTop: 4 }}>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, justifyContent: 'center' }}
+                  onClick={() => onUseDebit(netFromGross)}>Net → DR</button>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 10, justifyContent: 'center' }}
+                  onClick={() => onUseDebit(taxFromGross)}>VAT → DR</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Row({ label, val, color, bold }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+      <span style={{ color: 'var(--text-3)' }}>{label}</span>
+      <span style={{ fontFamily: 'var(--mono)', fontWeight: bold ? 700 : 500, color: color || 'var(--text-1)' }}>
+        {val.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+      </span>
+    </div>
+  )
+}
+
 function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, onSaveTemplate, onDeleteTemplate, recentMemos }) {
   const blankEntry = () => ({ account: '', description: '', debit: '', credit: '', id: crypto.randomUUID() })
   const [form, setForm] = useState(voucher || {
     type: 'general', date: new Date().toISOString().slice(0, 10),
     reference: '', memo: '', clientId: '', entries: [blankEntry(), blankEntry()],
   })
+  const [lastFocused, setLastFocused] = useState({ index: 0, side: 'debit' })
 
   // Template UI state
   const [showTemplates, setShowTemplates] = useState(false)
@@ -170,6 +474,20 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
     setF('entries', form.entries.filter((_, idx) => idx !== i))
   }
   function addEntry() { setF('entries', [...form.entries, blankEntry()]) }
+
+  // Push calculator result into the last focused entry row
+  function calcUseDebit(val) {
+    const i = lastFocused.index < form.entries.length ? lastFocused.index : form.entries.length - 1
+    const entries = [...form.entries]
+    entries[i] = { ...entries[i], debit: String(val), credit: '' }
+    setF('entries', entries)
+  }
+  function calcUseCredit(val) {
+    const i = lastFocused.index < form.entries.length ? lastFocused.index : form.entries.length - 1
+    const entries = [...form.entries]
+    entries[i] = { ...entries[i], credit: String(val), debit: '' }
+    setF('entries', entries)
+  }
 
   function applyTemplate(tpl) {
     setForm(f => ({
@@ -201,11 +519,15 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
 
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 720 }} onKeyDown={e => e.key === 'Escape' && onClose()}>
+      <div className="modal" style={{ maxWidth: 980 }} onKeyDown={e => e.key === 'Escape' && onClose()}>
         <div className="modal-header">
           <span className="modal-title">{voucher ? 'Edit Voucher' : 'New Voucher'}</span>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
+
+        {/* Two-column: form left, calculator right */}
+        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
 
         <div className="form-grid" style={{ marginBottom: 16 }}>
           <div className="form-group">
@@ -410,6 +732,16 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
             <span>CR: {fmt(credit)}</span>
           </div>
         </div>
+
+          </div>{/* end left column */}
+
+          {/* Right column: calculator */}
+          <AccountingCalc
+            onUseDebit={calcUseDebit}
+            onUseCredit={calcUseCredit}
+            taxRate={12}
+          />
+        </div>{/* end two-column */}
 
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
