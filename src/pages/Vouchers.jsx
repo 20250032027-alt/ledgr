@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../store/useStore.jsx'
 import { fmt, fmtDate, voucherTotals } from '../utils'
-import { Plus, X, Trash2, Pencil, Search, CheckCircle, AlertCircle, FileText, Download, BookMarked, ChevronDown } from 'lucide-react'
+import { Plus, X, Trash2, Pencil, Search, CheckCircle, AlertCircle, FileText, Download, BookMarked, ChevronDown, Delete } from 'lucide-react'
 
 const TYPES = ['general', 'cash receipt', 'cash disbursement', 'expense', 'adjustment']
 
@@ -77,11 +77,175 @@ async function exportVouchersToExcel(vouchers, clients) {
   XLSX.writeFile(wb, `ledgr-vouchers-${dateStr}.xlsx`)
 }
 
-function EntryRow({ entry, onChange, onRemove, onAddBelow, accounts, isLast }) {
-  const accountNames = new Set(accounts.map(a => a.name.trim().toLowerCase()))
-  const val = (entry.account || '').trim()
-  const isInvalid = val.length > 0 && !accountNames.has(val.toLowerCase())
+function AccountAutocomplete({ value, onChange, onFocus, accounts, placeholder, style }) {
+  const [open, setOpen] = useState(false)
+  const [highlighted, setHighlighted] = useState(0)
+  const wrapRef = useRef(null)
 
+  const q = value.trim().toLowerCase()
+  const suggestions = q.length === 0 ? [] : accounts
+    .filter(a => a.name.toLowerCase().includes(q) || (a.code || '').toLowerCase().startsWith(q))
+    .slice(0, 8)
+
+  useEffect(() => { setHighlighted(0) }, [q])
+
+  // Close on outside click
+  useEffect(() => {
+    function handler(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  function select(name) {
+    onChange(name)
+    setOpen(false)
+  }
+
+  function handleKeyDown(e) {
+    if (!open || suggestions.length === 0) {
+      if (e.key === 'ArrowDown' && suggestions.length > 0) { setOpen(true); e.preventDefault() }
+      return
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlighted(h => Math.min(h + 1, suggestions.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)) }
+    else if (e.key === 'Enter') { e.preventDefault(); select(suggestions[highlighted].name) }
+    else if (e.key === 'Escape') { setOpen(false) }
+    else if (e.key === 'Tab') { if (suggestions.length > 0) select(suggestions[highlighted].name) }
+  }
+
+  const accountNames = new Set(accounts.map(a => a.name.trim().toLowerCase()))
+  const isInvalid = value.trim().length > 0 && !accountNames.has(value.trim().toLowerCase())
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <input
+        className="form-input"
+        style={{
+          ...style,
+          borderColor: isInvalid ? 'var(--red)' : open && suggestions.length > 0 ? 'var(--accent)' : undefined,
+          background: isInvalid ? 'rgba(239,68,68,0.07)' : undefined,
+        }}
+        value={value}
+        placeholder={placeholder}
+        autoComplete="off"
+        onChange={e => { onChange(e.target.value); setOpen(true) }}
+        onFocus={() => { setOpen(true); if (onFocus) onFocus() }}
+        onKeyDown={handleKeyDown}
+      />
+      {isInvalid && !open && (
+        <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 2, lineHeight: 1.3 }}>
+          ⚠ Not in Chart of Accounts
+        </div>
+      )}
+      {open && suggestions.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0,
+          background: 'var(--surface2)',
+          border: '1px solid var(--accent)',
+          borderRadius: 'var(--radius-sm)',
+          zIndex: 999,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+          overflow: 'hidden',
+          marginTop: 2,
+        }}>
+          {suggestions.map((a, i) => (
+            <div
+              key={a.id}
+              onMouseDown={() => select(a.name)}
+              onMouseEnter={() => setHighlighted(i)}
+              style={{
+                padding: '8px 10px',
+                cursor: 'pointer',
+                background: i === highlighted ? 'var(--accent-glow)' : 'transparent',
+                borderBottom: i < suggestions.length - 1 ? '1px solid var(--border)' : 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}
+            >
+              <span style={{ fontSize: 12, color: i === highlighted ? 'var(--text-1)' : 'var(--text-2)' }}>
+                {a.name}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-3)', fontFamily: 'var(--mono)', marginLeft: 8 }}>
+                {a.code && `${a.code} · `}{a.type}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MemoAutocomplete({ value, onChange, recentMemos, placeholder, style }) {
+  const [open, setOpen] = useState(false)
+  const [highlighted, setHighlighted] = useState(0)
+  const wrapRef = useRef(null)
+
+  const q = value.trim().toLowerCase()
+  const suggestions = recentMemos.filter(m => m.toLowerCase().includes(q) && m !== value).slice(0, 6)
+
+  useEffect(() => { setHighlighted(0) }, [q])
+
+  useEffect(() => {
+    function handler(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  function select(memo) { onChange(memo); setOpen(false) }
+
+  function handleKeyDown(e) {
+    if (!open || suggestions.length === 0) return
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlighted(h => Math.min(h + 1, suggestions.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)) }
+    else if (e.key === 'Enter' && open) { e.preventDefault(); select(suggestions[highlighted]) }
+    else if (e.key === 'Escape') { setOpen(false) }
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', flex: 1 }}>
+      <input autoFocus className="form-input" value={value}
+        style={style}
+        placeholder={placeholder}
+        autoComplete="off"
+        onChange={e => { onChange(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={handleKeyDown}
+      />
+      {open && suggestions.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0,
+          background: 'var(--surface2)',
+          border: '1px solid var(--accent)',
+          borderRadius: 'var(--radius-sm)',
+          zIndex: 999,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+          overflow: 'hidden',
+          marginTop: 2,
+        }}>
+          {suggestions.map((m, i) => (
+            <div key={i}
+              onMouseDown={() => select(m)}
+              onMouseEnter={() => setHighlighted(i)}
+              style={{
+                padding: '7px 10px', cursor: 'pointer', fontSize: 12,
+                background: i === highlighted ? 'var(--accent-glow)' : 'transparent',
+                borderBottom: i < suggestions.length - 1 ? '1px solid var(--border)' : 'none',
+                color: i === highlighted ? 'var(--text-1)' : 'var(--text-2)',
+              }}>
+              {m}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EntryRow({ entry, onChange, onRemove, onAddBelow, accounts, isLast, index, onFocus }) {
   // Tab on last credit field → add new row
   function handleCreditKeyDown(e) {
     if (e.key === 'Tab' && !e.shiftKey && isLast) {
@@ -92,24 +256,15 @@ function EntryRow({ entry, onChange, onRemove, onAddBelow, accounts, isLast }) {
 
   return (
     <tr>
-      <td>
-        <input
-          className="form-input"
-          style={{
-            fontSize: 12, padding: '5px 8px',
-            borderColor: isInvalid ? 'var(--red)' : undefined,
-            background: isInvalid ? 'rgba(239,68,68,0.07)' : undefined,
-          }}
-          list="accounts-list"
+      <td style={{ position: 'relative' }}>
+        <AccountAutocomplete
           value={entry.account}
-          onChange={e => onChange({ ...entry, account: e.target.value })}
+          onChange={v => onChange({ ...entry, account: v })}
+          onFocus={() => onFocus(index, 'debit')}
+          accounts={accounts}
           placeholder="Account name"
+          style={{ fontSize: 12, padding: '5px 8px' }}
         />
-        {isInvalid && (
-          <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 2, lineHeight: 1.3 }}>
-            ⚠ Not in Chart of Accounts
-          </div>
-        )}
       </td>
       <td>
         <input
@@ -125,6 +280,7 @@ function EntryRow({ entry, onChange, onRemove, onAddBelow, accounts, isLast }) {
           className="form-input"
           style={{ fontSize: 12, padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--mono)' }}
           type="number" min="0" step="0.01" value={entry.debit}
+          onFocus={() => onFocus(index, 'debit')}
           onChange={e => onChange({ ...entry, debit: e.target.value, credit: e.target.value ? '' : entry.credit })}
           placeholder="0.00"
         />
@@ -134,6 +290,7 @@ function EntryRow({ entry, onChange, onRemove, onAddBelow, accounts, isLast }) {
           className="form-input"
           style={{ fontSize: 12, padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--mono)' }}
           type="number" min="0" step="0.01" value={entry.credit}
+          onFocus={() => onFocus(index, 'credit')}
           onChange={e => onChange({ ...entry, credit: e.target.value, debit: e.target.value ? '' : entry.debit })}
           onKeyDown={handleCreditKeyDown}
           placeholder="0.00"
@@ -304,7 +461,7 @@ function AccountingCalc({ onUseDebit, onUseCredit, taxRate = 12 }) {
         {/* Buttons */}
         <div style={grid4}>
           {[
-            ['C','spec'], ['⌫','spec'], ['%','spec'], ['÷','op'],
+            ['C','spec'], ['del','spec'], ['%','spec'], ['÷','op'],
             ['7','num'],  ['8','num'],  ['9','num'],  ['×','op'],
             ['4','num'],  ['5','num'],  ['6','num'],  ['−','op'],
             ['1','num'],  ['2','num'],  ['3','num'],  ['+','op'],
@@ -318,14 +475,14 @@ function AccountingCalc({ onUseDebit, onUseCredit, taxRate = 12 }) {
               <button key={i} style={{ ...style, gridColumn: isEqSpan ? 'span 2' : undefined }}
                 onClick={() => {
                   if (k === 'C') pressClear()
-                  else if (k === '⌫') pressBackspace()
+                  else if (k === 'del') pressBackspace()
                   else if (k === '%') pressPercent()
                   else if (k === '.') pressDot()
                   else if (k === '=') pressEqual()
                   else if (['+','−','×','÷'].includes(k)) pressOp(k === '−' ? '-' : k)
                   else pressDigit(k)
                 }}>
-                {k}
+                {k === 'del' ? <Delete size={14} /> : k}
               </button>
             )
           })}
@@ -553,19 +710,15 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
           </div>
           <div className="form-group form-col-full">
             <label className="form-label">Memo</label>
-            <input autoFocus className="form-input" value={form.memo}
-              onChange={e => setF('memo', e.target.value)}
-              list="memo-suggestions"
-              placeholder="Brief description of this entry" />
-            <datalist id="memo-suggestions">
-              {recentMemos.map((m, i) => <option key={i} value={m} />)}
-            </datalist>
+            <MemoAutocomplete
+              value={form.memo}
+              onChange={v => setF('memo', v)}
+              recentMemos={recentMemos}
+              placeholder="Brief description of this entry"
+            />
           </div>
         </div>
 
-        <datalist id="accounts-list">
-          {accounts.map(a => <option key={a.id} value={a.name} />)}
-        </datalist>
         {accounts.length === 0 && (
           <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
             Tip: set up your Chart of Accounts first so account names autocomplete here.
@@ -701,11 +854,13 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
             <tbody>
               {form.entries.map((e, i) => (
                 <EntryRow key={e.id} entry={e}
+                  index={i}
                   onChange={upd => setEntry(i, upd)}
                   onRemove={() => removeEntry(i)}
                   onAddBelow={addEntry}
                   isLast={i === form.entries.length - 1}
                   accounts={accounts}
+                  onFocus={(idx, side) => setLastFocused({ index: idx, side })}
                 />
               ))}
             </tbody>
