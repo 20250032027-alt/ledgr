@@ -81,6 +81,8 @@ function AccountAutocomplete({ value, onChange, onFocus, accounts, placeholder, 
   const [open, setOpen] = useState(false)
   const [highlighted, setHighlighted] = useState(0)
   const wrapRef = useRef(null)
+  const listRef = useRef(null)
+  const itemRefs = useRef([])
 
   const q = value.trim().toLowerCase()
   const suggestions = q.length === 0 ? [] : accounts
@@ -88,6 +90,13 @@ function AccountAutocomplete({ value, onChange, onFocus, accounts, placeholder, 
     .slice(0, 8)
 
   useEffect(() => { setHighlighted(0) }, [q])
+
+  // Scroll highlighted item into view when navigating with keyboard
+  useEffect(() => {
+    if (open && itemRefs.current[highlighted]) {
+      itemRefs.current[highlighted].scrollIntoView({ block: 'nearest' })
+    }
+  }, [highlighted, open])
 
   // Close on outside click
   useEffect(() => {
@@ -140,19 +149,21 @@ function AccountAutocomplete({ value, onChange, onFocus, accounts, placeholder, 
         </div>
       )}
       {open && suggestions.length > 0 && (
-        <div style={{
+        <div ref={listRef} style={{
           position: 'absolute', top: '100%', left: 0, right: 0,
           background: 'var(--surface2)',
           border: '1px solid var(--accent)',
           borderRadius: 'var(--radius-sm)',
-          zIndex: 999,
+          zIndex: 1000,
           boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-          overflow: 'hidden',
+          overflow: 'auto',
+          maxHeight: 260,
           marginTop: 2,
         }}>
           {suggestions.map((a, i) => (
             <div
               key={a.id}
+              ref={el => { itemRefs.current[i] = el }}
               onMouseDown={() => select(a.name)}
               onMouseEnter={() => setHighlighted(i)}
               style={{
@@ -161,6 +172,8 @@ function AccountAutocomplete({ value, onChange, onFocus, accounts, placeholder, 
                 background: i === highlighted ? 'var(--accent-glow)' : 'transparent',
                 borderBottom: i < suggestions.length - 1 ? '1px solid var(--border)' : 'none',
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                outline: i === highlighted ? '1px solid var(--accent)' : 'none',
+                outlineOffset: -1,
               }}
             >
               <span style={{ fontSize: 12, color: i === highlighted ? 'var(--text-1)' : 'var(--text-2)' }}>
@@ -181,11 +194,20 @@ function MemoAutocomplete({ value, onChange, recentMemos, placeholder, style }) 
   const [open, setOpen] = useState(false)
   const [highlighted, setHighlighted] = useState(0)
   const wrapRef = useRef(null)
+  const listRef = useRef(null)
+  const itemRefs = useRef([])
 
   const q = value.trim().toLowerCase()
   const suggestions = recentMemos.filter(m => m.toLowerCase().includes(q) && m !== value).slice(0, 6)
 
   useEffect(() => { setHighlighted(0) }, [q])
+
+  // Scroll highlighted item into view when navigating with keyboard
+  useEffect(() => {
+    if (open && itemRefs.current[highlighted]) {
+      itemRefs.current[highlighted].scrollIntoView({ block: 'nearest' })
+    }
+  }, [highlighted, open])
 
   useEffect(() => {
     function handler(e) {
@@ -198,11 +220,15 @@ function MemoAutocomplete({ value, onChange, recentMemos, placeholder, style }) 
   function select(memo) { onChange(memo); setOpen(false) }
 
   function handleKeyDown(e) {
-    if (!open || suggestions.length === 0) return
+    if (!open || suggestions.length === 0) {
+      if (e.key === 'ArrowDown' && suggestions.length > 0) { setOpen(true); e.preventDefault() }
+      return
+    }
     if (e.key === 'ArrowDown') { e.preventDefault(); setHighlighted(h => Math.min(h + 1, suggestions.length - 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)) }
-    else if (e.key === 'Enter' && open) { e.preventDefault(); select(suggestions[highlighted]) }
+    else if (e.key === 'Enter') { e.preventDefault(); select(suggestions[highlighted]) }
     else if (e.key === 'Escape') { setOpen(false) }
+    else if (e.key === 'Tab') { if (suggestions.length > 0) { e.preventDefault(); select(suggestions[highlighted]) } }
   }
 
   return (
@@ -216,25 +242,29 @@ function MemoAutocomplete({ value, onChange, recentMemos, placeholder, style }) 
         onKeyDown={handleKeyDown}
       />
       {open && suggestions.length > 0 && (
-        <div style={{
+        <div ref={listRef} style={{
           position: 'absolute', top: '100%', left: 0, right: 0,
           background: 'var(--surface2)',
           border: '1px solid var(--accent)',
           borderRadius: 'var(--radius-sm)',
-          zIndex: 999,
+          zIndex: 1000,
           boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-          overflow: 'hidden',
+          overflow: 'auto',
+          maxHeight: 220,
           marginTop: 2,
         }}>
           {suggestions.map((m, i) => (
             <div key={i}
+              ref={el => { itemRefs.current[i] = el }}
               onMouseDown={() => select(m)}
               onMouseEnter={() => setHighlighted(i)}
               style={{
-                padding: '7px 10px', cursor: 'pointer', fontSize: 12,
+                padding: '8px 10px', cursor: 'pointer', fontSize: 12,
                 background: i === highlighted ? 'var(--accent-glow)' : 'transparent',
                 borderBottom: i < suggestions.length - 1 ? '1px solid var(--border)' : 'none',
                 color: i === highlighted ? 'var(--text-1)' : 'var(--text-2)',
+                outline: i === highlighted ? '1px solid var(--accent)' : 'none',
+                outlineOffset: -1,
               }}>
               {m}
             </div>
@@ -840,7 +870,7 @@ function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, 
           </div>
         )}
 
-        <div style={{ overflowX: 'auto', marginBottom: 12 }}>
+        <div style={{ overflowX: 'visible', marginBottom: 12 }}>
           <table style={{ fontSize: 12 }}>
             <thead>
               <tr>
