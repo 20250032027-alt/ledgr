@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { format } from 'date-fns'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { StoreProvider, useStore } from './store/useStore.jsx'
+import { onToast, showToast } from './lib/toast'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Clients from './pages/Clients'
@@ -17,6 +18,7 @@ import {
   LayoutDashboard, Users, FileText, Scale, Waves,
   BarChart3, Receipt, Settings as SettingsIcon, Menu, X,
   BookOpen, BookText, LogOut, AlertCircle, Loader2,
+  WifiOff, RefreshCw, CloudUpload, CheckCircle2,
 } from 'lucide-react'
 
 const NAV = [
@@ -44,10 +46,96 @@ const PAGES = {
   financial: FinancialCondition, billing: Billing, settings: Settings,
 }
 
+function ToastHost() {
+  const [toasts, setToasts] = useState([])
+
+  useEffect(() => {
+    return onToast((toast) => {
+      setToasts(t => [...t, toast])
+      setTimeout(() => setToasts(t => t.filter(x => x.id !== toast.id)), toast.duration)
+    })
+  }, [])
+
+  const iconFor = (kind) => {
+    if (kind === 'offline') return <WifiOff size={14} />
+    if (kind === 'offline-save') return <CloudUpload size={14} />
+    if (kind === 'synced') return <CheckCircle2 size={14} />
+    return <RefreshCw size={14} />
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', bottom: 16, left: 16, right: 16, zIndex: 2000,
+      display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', pointerEvents: 'none',
+    }}>
+      {toasts.map(t => (
+        <div key={t.id} style={{
+          display: 'flex', alignItems: 'center', gap: 8, maxWidth: 420,
+          background: 'var(--surface2)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)', padding: '10px 14px',
+          fontSize: 12.5, color: 'var(--text-1)', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        }}>
+          {iconFor(t.kind)}
+          <span>{t.message}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ConnectivityWatcher() {
+  useEffect(() => {
+    let wasOffline = !navigator.onLine
+    function goOffline() {
+      wasOffline = true
+      showToast("You're offline. You can keep working — changes save on this device and will sync automatically once you're back online.", 'offline', 6000)
+    }
+    function goOnline() {
+      if (wasOffline) showToast('Back online — syncing your changes…', 'sync', 3000)
+      wasOffline = false
+    }
+    window.addEventListener('offline', goOffline)
+    window.addEventListener('online', goOnline)
+    return () => { window.removeEventListener('offline', goOffline); window.removeEventListener('online', goOnline) }
+  }, [])
+  return null
+}
+
+function SyncPill() {
+  const { syncStatus, pending } = useStore()
+  const [online, setOnline] = useState(navigator.onLine)
+  useEffect(() => {
+    const on = () => setOnline(true), off = () => setOnline(false)
+    window.addEventListener('online', on); window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+
+  const hadPending = useRef(false)
+  useEffect(() => {
+    if (pending > 0) hadPending.current = true
+    else if (hadPending.current && syncStatus === 'idle') {
+      hadPending.current = false
+      showToast('All changes synced.', 'synced', 2500)
+    }
+  }, [pending, syncStatus])
+
+  let icon = <CheckCircle2 size={12} />, label = 'Synced', color = 'var(--green)'
+  if (!online) { icon = <WifiOff size={12} />; label = pending > 0 ? `Offline · ${pending} pending` : 'Offline'; color = 'var(--text-3)' }
+  else if (syncStatus === 'syncing') { icon = <RefreshCw size={12} className="spin" />; label = 'Syncing…'; color = 'var(--accent)' }
+  else if (syncStatus === 'error') { icon = <CloudUpload size={12} />; label = `${pending} pending — retrying`; color = 'var(--amber)' }
+  else if (pending > 0) { icon = <CloudUpload size={12} />; label = `${pending} pending`; color = 'var(--amber)' }
+
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color, marginLeft: 'auto' }}>
+      {icon}{label}
+    </span>
+  )
+}
+
 function AppShell({ userEmail }) {
   const [page, setPage] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const { loading, error, clearError } = useStore()
+  const { loading, error, clearError, conflicts, clearConflicts } = useStore()
   const Page = PAGES[page]
 
   function navigate(id) { setPage(id); setSidebarOpen(false) }
@@ -124,7 +212,27 @@ function AppShell({ userEmail }) {
           </button>
           <div className="topbar-title">{PAGE_TITLES[page]}</div>
           <span className="topbar-date">{format(new Date(), 'EEEE, MMM d, yyyy')}</span>
+          <SyncPill />
         </header>
+
+        {conflicts.length > 0 && (
+          <div style={{
+            margin: '12px 24px 0', padding: '10px 14px', borderRadius: 'var(--radius-sm)',
+            background: 'var(--amber)15', border: '1px solid var(--amber)40',
+            color: 'var(--amber)', fontSize: 12, display: 'flex', alignItems: 'flex-start', gap: 8,
+          }}>
+            <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ flex: 1 }}>
+              {conflicts.length} change{conflicts.length > 1 ? 's' : ''} from another device took priority over an offline edit made on this one:
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {conflicts.slice(0, 5).map(c => <li key={c.id}>{c.message}</li>)}
+              </ul>
+            </div>
+            <button onClick={clearConflicts} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {error && (
           <div style={{
@@ -187,16 +295,20 @@ export default function App() {
 
   if (session === undefined) {
     return (
-      <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-2)' }}>
-        <Loader2 size={22} className="spin" />
-      </div>
+      <>
+        <ToastHost /><ConnectivityWatcher />
+        <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-2)' }}>
+          <Loader2 size={22} className="spin" />
+        </div>
+      </>
     )
   }
 
-  if (!session) return <Login />
+  if (!session) return <><ToastHost /><ConnectivityWatcher /><Login /></>
 
   return (
     <StoreProvider userId={session.user.id}>
+      <ToastHost /><ConnectivityWatcher />
       <AppShell userEmail={session.user.email} />
     </StoreProvider>
   )
