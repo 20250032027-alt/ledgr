@@ -197,6 +197,7 @@ function MemoAutocomplete({ value, onChange, recentMemos, placeholder, style }) 
   const listRef = useRef(null)
   const itemRefs = useRef([])
 
+  value = value || ''
   const q = value.trim().toLowerCase()
   const suggestions = recentMemos.filter(m => m.toLowerCase().includes(q) && m !== value).slice(0, 6)
 
@@ -640,7 +641,7 @@ function Row({ label, val, color, bold }) {
 
 function VoucherModal({ voucher, onClose, onSave, clients, accounts, templates, onSaveTemplate, onDeleteTemplate, recentMemos }) {
   const blankEntry = () => ({ account: '', description: '', debit: '', credit: '', id: crypto.randomUUID() })
-  const [form, setForm] = useState(voucher || {
+  const [form, setForm] = useState(voucher ? { ...voucher, memo: voucher.memo || '' } : {
     type: 'general', date: new Date().toISOString().slice(0, 10),
     reference: '', memo: '', clientId: '', entries: [blankEntry(), blankEntry()],
   })
