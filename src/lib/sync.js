@@ -96,12 +96,12 @@ async function pushOutbox() {
   for (const entry of entries) {
     const cfg = TABLES[entry.table]
     if (entry.op === 'insert') {
-      const { error } = await supabase.from(cfg.remote).insert(cfg.toDb(entry.payload))
+      const { error } = await supabase.from(cfg.remote).insert(cfg.toDb(entry.payload, 'insert'))
       if (error) throw error
     } else if (entry.op === 'update') {
       const filterCol = cfg.pk === 'userId' ? 'user_id' : 'id'
       const { error, data } = await supabase.from(cfg.remote)
-        .update(cfg.toDb(entry.payload)).eq(filterCol, entry.recordId).select()
+        .update(cfg.toDb(entry.payload, 'update')).eq(filterCol, entry.recordId).select()
       if (error) throw error
       if (!data || data.length === 0) {
         // record no longer exists remotely (deleted elsewhere) — drop it locally
