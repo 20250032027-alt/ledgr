@@ -96,7 +96,7 @@ async function pushOutbox() {
   for (const entry of entries) {
     const cfg = TABLES[entry.table]
     if (entry.op === 'insert') {
-      const { error } = await supabase.from(cfg.remote).insert(cfg.toDb(entry.payload, 'insert'))
+      const { error } = await supabase.from(cfg.remote).upsert(cfg.toDb(entry.payload, 'insert'))
       if (error) throw error
     } else if (entry.op === 'update') {
       const filterCol = cfg.pk === 'userId' ? 'user_id' : 'id'

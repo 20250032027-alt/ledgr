@@ -61,15 +61,20 @@ export function StoreProvider({ children, userId }) {
       await refreshFromLocal()
       if (cancelled) return
 
-      // First-ever login on this device with no local settings row yet —
-      // create one immediately (offline-safe, queued like everything else).
+      initSync(userId)
+      if (navigator.onLine) await syncNow()
+
+      // Only bootstrap default settings if there's genuinely no row for this
+      // user anywhere — checked AFTER pulling from the server, not before.
+      // Checking only the local cache would treat every brand-new device as
+      // a brand-new user, even for an account with years of real settings
+      // already on the server, and queue a phantom insert that permanently
+      // collides with the real row.
       const existingSettings = await db.settings.get(userId)
       if (!existingSettings) {
         await queueWrite('settings', 'insert', { userId, ...defaultSettings }, { silent: true })
       }
 
-      initSync(userId)
-      if (navigator.onLine) await syncNow()
       await refreshFromLocal()
       if (!cancelled) setLoading(false)
     }
