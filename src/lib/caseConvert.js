@@ -41,7 +41,6 @@ export function toDb(obj, op = 'insert') {
 export function fromDb(row) {
   const out = {}
   for (const [k, v] of Object.entries(row)) {
-    if (k === 'user_id') continue
     out[toCamelKey(k)] = v
   }
   return out
